@@ -11,3 +11,5 @@ target/
 apps/mobile/ios/
 apps/mobile/android/
 apps/host/src-tauri/gen/
+__pycache__/
+*.pyc
