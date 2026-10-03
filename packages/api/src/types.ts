@@ -22,6 +22,21 @@ export interface SkillSummary {
   enabled: boolean;
 }
 
+/** A skill as the host lists it. Mirrors `SkillInfo` in crates/core. */
+export interface SkillInfo extends SkillSummary {
+  triggers: string[];
+  version: number;
+  path: string;
+}
+
+export interface SkillList {
+  /** Folder the skills live in, one subfolder per skill. */
+  dir: string;
+  skills: SkillInfo[];
+  /** Skill files that could not be loaded. */
+  errors: { path: string; message: string }[];
+}
+
 export interface ChatRequest {
   messages: ChatMessage[];
   /** Model id; the host's active model is used when omitted. */
@@ -32,8 +47,11 @@ export interface ChatResponse {
   message: ChatMessage;
 }
 
-/** A piece of a streamed answer. Mirrors `Delta` in crates/runtime. */
-export type Delta = { kind: "content"; text: string } | { kind: "reasoning"; text: string };
+/** What streams back during a reply. Mirrors `ChatEvent` in crates/core. */
+export type ChatEvent =
+  | { kind: "skills"; names: string[] }
+  | { kind: "content"; text: string }
+  | { kind: "reasoning"; text: string };
 
 /** Mirrors `EngineState` in crates/core. */
 export type EngineState =
@@ -67,4 +85,5 @@ export type EngineEvent =
   | { type: "downloadProgress"; repo: string; done: number; total: number | null }
   | { type: "downloadFinished"; repo: string; model: InstalledModel }
   | { type: "downloadFailed"; repo: string; error: string }
-  | { type: "modelsChanged" };
+  | { type: "modelsChanged" }
+  | { type: "skillsChanged" };

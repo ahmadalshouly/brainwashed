@@ -30,6 +30,7 @@ pub struct LlamaServer {
     port: u16,
     model: PathBuf,
     log: Arc<Mutex<VecDeque<String>>>,
+    context_size: Option<u32>,
 }
 
 const LOG_LINES: usize = 200;
@@ -86,8 +87,10 @@ impl LlamaServer {
             port,
             model: opts.model.clone(),
             log,
+            context_size: None,
         };
         server.wait_ready(client, timeout).await?;
+        server.context_size = server.fetch_context_size(client).await;
         Ok(server)
     }
 
@@ -122,6 +125,27 @@ impl LlamaServer {
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
+    }
+
+    /// llama.cpp caps the context at what the model was trained on, so the
+    /// real size can be smaller than requested.
+    async fn fetch_context_size(&self, client: &reqwest::Client) -> Option<u32> {
+        let props: serde_json::Value = client
+            .get(format!("{}/props", self.base_url()))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        props["default_generation_settings"]["n_ctx"]
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+    }
+
+    /// The context size the server actually uses, if it reported one.
+    pub fn context_size(&self) -> Option<u32> {
+        self.context_size
     }
 
     pub fn base_url(&self) -> String {

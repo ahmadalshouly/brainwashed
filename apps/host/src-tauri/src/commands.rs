@@ -1,8 +1,8 @@
 //! Tauri commands the UI calls. Errors are returned as display strings.
 
 use brainwashed_core::{
-    CatalogItem, ChatMessage, Delta, Engine, EngineState, Hardware, HostInfo, InstalledModel,
-    SamplingOptions, Settings,
+    CatalogItem, ChatEvent, ChatMessage, Engine, EngineState, Hardware, HostInfo, InstalledModel,
+    SamplingOptions, Settings, SkillList,
 };
 use std::path::PathBuf;
 use tauri::{ipc::Channel, State};
@@ -80,16 +80,47 @@ pub fn update_settings(engine: State<Engine>, settings: Settings) -> CmdResult<(
     engine.update_settings(settings).map_err(err)
 }
 
-/// Streams the reply through `on_delta` and returns the full answer.
+#[tauri::command]
+pub fn skills(engine: State<Engine>) -> SkillList {
+    engine.skills()
+}
+
+#[tauri::command]
+pub fn skill_source(engine: State<Engine>, name: String) -> CmdResult<String> {
+    engine.skill_source(&name).map_err(err)
+}
+
+#[tauri::command]
+pub fn save_skill(
+    engine: State<Engine>,
+    source: String,
+    previous_name: Option<String>,
+) -> CmdResult<String> {
+    engine
+        .save_skill(&source, previous_name.as_deref())
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn delete_skill(engine: State<Engine>, name: String) -> CmdResult<()> {
+    engine.delete_skill(&name).map_err(err)
+}
+
+#[tauri::command]
+pub fn set_skill_enabled(engine: State<Engine>, name: String, enabled: bool) -> CmdResult<()> {
+    engine.set_skill_enabled(&name, enabled).map_err(err)
+}
+
+/// Streams the reply through `on_event` and returns the full answer.
 #[tauri::command]
 pub async fn chat(
     engine: State<'_, Engine>,
     messages: Vec<ChatMessage>,
-    on_delta: Channel<Delta>,
+    on_event: Channel<ChatEvent>,
 ) -> CmdResult<String> {
     engine
-        .chat(&messages, &SamplingOptions::default(), |d| {
-            let _ = on_delta.send(d);
+        .chat(&messages, &SamplingOptions::default(), |e| {
+            let _ = on_event.send(e);
         })
         .await
         .map_err(err)

@@ -4,6 +4,7 @@ import { engine, errorText } from "../engine";
 
 interface Turn extends ChatMessage {
   reasoning?: string;
+  skills?: string[];
   error?: string;
 }
 
@@ -31,12 +32,17 @@ export function ChatView({ state, onPickModel }: { state: EngineState; onPickMod
     const update = (f: (t: Turn) => Turn) =>
       setTurns((all) => [...all.slice(0, -1), f(all[all.length - 1])]);
     try {
-      await engine.chat(history, (d) =>
-        update((t) =>
-          d.kind === "content"
-            ? { ...t, content: t.content + d.text }
-            : { ...t, reasoning: (t.reasoning ?? "") + d.text },
-        ),
+      await engine.chat(history, (e) =>
+        update((t) => {
+          switch (e.kind) {
+            case "skills":
+              return { ...t, skills: e.names };
+            case "content":
+              return { ...t, content: t.content + e.text };
+            case "reasoning":
+              return { ...t, reasoning: (t.reasoning ?? "") + e.text };
+          }
+        }),
       );
     } catch (e) {
       update((t) => ({ ...t, error: errorText(e) }));
@@ -63,6 +69,9 @@ export function ChatView({ state, onPickModel }: { state: EngineState; onPickMod
         {turns.length === 0 && <p className="hint">Ask anything. Everything stays on this computer.</p>}
         {turns.map((t, i) => (
           <div key={i} className={`bubble ${t.role}`}>
+            {t.skills && t.skills.length > 0 && (
+              <div className="skills-used">Using {t.skills.join(", ")}</div>
+            )}
             {t.reasoning && (
               <details className="reasoning">
                 <summary>Thinking</summary>

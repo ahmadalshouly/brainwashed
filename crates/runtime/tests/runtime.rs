@@ -180,6 +180,7 @@ async fn real_llama_server_round_trip() {
     let server = LlamaServer::start(&opts, &client, Duration::from_secs(60))
         .await
         .unwrap();
+    assert!(server.context_size().is_some_and(|n| n > 0 && n <= 512));
     let mut pieces = 0;
     stream_chat(
         &client,

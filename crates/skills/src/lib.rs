@@ -1,10 +1,16 @@
 //! Skills are markdown files with YAML frontmatter that the host injects into
 //! the model's prompt at inference time. See `skills-examples/` for the format.
 
-use serde::Deserialize;
+mod registry;
+mod router;
+
+pub use registry::{fingerprint, save, LoadError, Registry, SkillEntry, SkillSummary, SKILL_FILE};
+pub use router::{Router, MAX_ACTIVE_SKILLS};
+
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillMeta {
     pub name: String,
     pub description: String,

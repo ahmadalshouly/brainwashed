@@ -115,10 +115,11 @@ async fn chat_needs_a_loaded_model() {
 fn system_prompt_is_kept_and_client_system_appended() {
     let dir = tempfile::tempdir().unwrap();
     let engine = engine_blocking(dir.path());
-    let prompt = engine.build_prompt(&[
+    let (prompt, used) = engine.build_prompt(&[
         ChatMessage::new(Role::System, "Speak French."),
         ChatMessage::new(Role::User, "hi"),
     ]);
+    assert!(used.is_empty());
     assert_eq!(prompt.len(), 2);
     assert_eq!(prompt[0].role, Role::System);
     assert!(prompt[0].content.starts_with("You are BrainWashed"));
@@ -184,7 +185,11 @@ async fn end_to_end_with_real_llama_server() {
                 max_tokens: Some(8),
                 ..Default::default()
             },
-            |_| pieces += 1,
+            |e| {
+                if !matches!(e, brainwashed_core::ChatEvent::Skills { .. }) {
+                    pieces += 1
+                }
+            },
         )
         .await
         .unwrap();

@@ -229,6 +229,7 @@ version = "0.0.0"
 dependencies = [
  "axum",
  "brainwashed-runtime",
+ "brainwashed-skills",
  "reqwest",
  "serde",
  "serde_json",
@@ -281,6 +282,7 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_norway",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 

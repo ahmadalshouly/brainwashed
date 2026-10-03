@@ -41,6 +41,14 @@ pub fn run() {
                 }
             });
 
+            // Pick up skills edited in any text editor.
+            let watching = engine.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = watching
+                    .watch_skills(std::time::Duration::from_secs(2))
+                    .await;
+            });
+
             app.manage(engine);
             Ok(())
         })
@@ -57,6 +65,11 @@ pub fn run() {
             commands::unload_model,
             commands::get_settings,
             commands::update_settings,
+            commands::skills,
+            commands::skill_source,
+            commands::save_skill,
+            commands::delete_skill,
+            commands::set_skill_enabled,
             commands::chat,
         ])
         .build(tauri::generate_context!())
