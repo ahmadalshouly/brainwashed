@@ -1,0 +1,13 @@
+[package]
+name = "brainwashed-skills"
+version = "0.0.0"
+description = "Parses and loads BrainWashed SKILL.md files."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_norway = "0.9"
+thiserror = "2"
