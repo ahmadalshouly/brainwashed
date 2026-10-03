@@ -43,6 +43,33 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  llama-e2e:
+    name: End to end with a real llama-server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Build llama-server
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp "$RUNNER_TEMP/llama.cpp"
+          cmake -S "$RUNNER_TEMP/llama.cpp" -B "$RUNNER_TEMP/llama.cpp/build" -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF
+          cmake --build "$RUNNER_TEMP/llama.cpp/build" --target llama-server -j4
+      - name: Make a tiny random-weight model
+        run: |
+          pip install gguf numpy
+          python crates/runtime/tests/make_tiny_model.py "$RUNNER_TEMP/tiny.gguf"
+      - run: mkdir -p apps/host/dist
+      - name: Run tests against it
+        env:
+          BRAINWASHED_TEST_LLAMA_SERVER: ${{ runner.temp }}/llama.cpp/build/bin/llama-server
+          BRAINWASHED_TEST_MODEL: ${{ runner.temp }}/tiny.gguf
+        run: cargo test -p brainwashed-runtime -p brainwashed-core
+
   host:
     name: Host app (${{ matrix.platform }})
     needs: [js, rust]

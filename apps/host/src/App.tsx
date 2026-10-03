@@ -1,30 +1,35 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type { HostInfo } from "@brainwashed/api";
+import { useState } from "react";
+import { ChatView } from "./views/ChatView";
+import { ModelsView } from "./views/ModelsView";
+import { StatusBar } from "./views/StatusBar";
+import { useEngineState } from "./engine";
+
+type Tab = "chat" | "models";
 
 export function App() {
-  const [info, setInfo] = useState<HostInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    invoke<HostInfo>("host_info").then(setInfo, (e) => setError(String(e)));
-  }, []);
+  const state = useEngineState();
+  const [tab, setTab] = useState<Tab>(state.state === "ready" ? "chat" : "models");
 
   return (
-    <main>
-      <h1>BrainWashed</h1>
-      <p className="tagline">Your laptop, your AI.</p>
-      {error && <p className="error">{error}</p>}
-      {info && (
-        <dl>
-          <dt>Host</dt>
-          <dd>{info.name}</dd>
-          <dt>Version</dt>
-          <dd>{info.version}</dd>
-          <dt>Model</dt>
-          <dd>{info.model ?? "No model loaded yet"}</dd>
-        </dl>
-      )}
-    </main>
+    <div className="app">
+      <nav className="sidebar">
+        <h1>BrainWashed</h1>
+        <button className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}>
+          Chat
+        </button>
+        <button className={tab === "models" ? "active" : ""} onClick={() => setTab("models")}>
+          Models
+        </button>
+        <div className="spacer" />
+        <StatusBar state={state} />
+      </nav>
+      <main className="content">
+        {tab === "chat" ? (
+          <ChatView state={state} onPickModel={() => setTab("models")} />
+        ) : (
+          <ModelsView state={state} />
+        )}
+      </main>
+    </div>
   );
 }
