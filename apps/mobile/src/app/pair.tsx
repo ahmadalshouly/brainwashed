@@ -3,7 +3,7 @@ import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, Vi
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Device from "expo-device";
 import { router, useLocalSearchParams } from "expo-router";
-import { pairWithHost, parsePairingUrl } from "@brainwashed/api";
+import { isPairingUrl, pairWithHost, parsePairingUrl } from "@brainwashed/api";
 import { remoteFetch, useHosts } from "../lib/hosts";
 import { useTheme } from "../lib/theme";
 
@@ -65,7 +65,7 @@ export default function Pair() {
           style={styles.camera}
           barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
           onBarcodeScanned={({ data }) => {
-            if (data.startsWith("brainwashed://pair")) pair(data);
+            if (isPairingUrl(data)) pair(data);
           }}
         />
       ) : Platform.OS !== "web" ? (

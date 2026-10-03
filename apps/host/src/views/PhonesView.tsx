@@ -53,22 +53,22 @@ export function PhonesView() {
     setJustPaired(null);
     const o = await run(engine.createPairingOffer());
     if (!o) return;
-    const qr = await QRCode.toDataURL(o.url, { margin: 1, width: 240 });
+    const qr = await QRCode.toDataURL(o.webUrl, { margin: 1, width: 240 });
     setOffer({ offer: o, qr });
   };
 
   return (
     <div className="phones">
       <div className="row header">
-        <h2>Phones</h2>
+        <h2>Devices</h2>
         <label className="toggle">
           <input type="checkbox" checked={!!status?.running} onChange={(e) => toggle(e.target.checked)} />
-          Allow phones on this network
+          Allow phones and browsers on this network
         </label>
       </div>
       <p className="muted">
-        Pair the BrainWashed phone app to chat with this computer's models. Everything between the phone and this
-        computer is end-to-end encrypted, and only phones you pair here can connect.
+        Chat with this computer's models from any phone, tablet or computer on your network, in a web browser or the
+        BrainWashed app. Only devices you pair here can connect, and messages are end-to-end encrypted.
       </p>
       {error && <div className="banner error">{error}</div>}
       {justPaired && <div className="banner ok">Paired with {justPaired}.</div>}
@@ -81,17 +81,23 @@ export function PhonesView() {
             <div className="qr">
               <img src={offer.qr} alt="Pairing QR code" width={240} height={240} />
               <div>
-                <strong>Scan with the BrainWashed app</strong>
+                <strong>Scan with your phone's camera or the BrainWashed app</strong>
                 <p className="muted">
-                  Open the app, tap Pair a computer, and point the camera here. The phone must be on the same Wi-Fi.
-                  This code works once and expires in 10 minutes.
+                  The camera opens BrainWashed in the browser, no app needed. On another computer, open this link
+                  instead:
+                </p>
+                <p className="small">
+                  <code className="link">{offer.offer.webUrl}</code>
+                </p>
+                <p className="muted">
+                  The device must be on the same Wi-Fi. This code works once and expires in 10 minutes.
                 </p>
                 <button onClick={() => setOffer(null)}>Cancel</button>
               </div>
             </div>
           ) : (
             <button className="primary" onClick={showCode}>
-              Pair a phone
+              Pair a device
             </button>
           )}
           <p className="muted small">
@@ -101,9 +107,9 @@ export function PhonesView() {
       )}
 
       <section>
-        <h3>Paired phones</h3>
+        <h3>Paired devices</h3>
         {devices.length === 0 ? (
-          <p className="hint">No phones yet.</p>
+          <p className="hint">No devices yet.</p>
         ) : (
           <ul className="list">
             {devices.map((d) => (

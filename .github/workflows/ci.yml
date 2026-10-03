@@ -23,6 +23,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Build the web chat
+        run: pnpm --filter @brainwashed/web build
 
   rust:
     name: Rust (fmt + clippy + tests)

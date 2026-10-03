@@ -11,6 +11,7 @@
     "test": "pnpm -r --if-present test",
     "build": "pnpm -r --if-present build",
     "host:dev": "pnpm --filter @brainwashed/host tauri dev",
+    "web:build": "pnpm --filter @brainwashed/web build",
     "mobile:start": "pnpm --filter @brainwashed/mobile start"
   },
   "pnpm": {

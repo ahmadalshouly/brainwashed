@@ -343,3 +343,8 @@ code {
   color: var(--ok);
   border: 1px solid var(--ok);
 }
+
+code.link {
+  user-select: all;
+  overflow-wrap: anywhere;
+}

@@ -26,7 +26,7 @@ export function App() {
           Skills
         </button>
         <button className={tab === "phones" ? "active" : ""} onClick={() => setTab("phones")}>
-          Phones
+          Devices
         </button>
         <div className="spacer" />
         <StatusBar state={state} />
