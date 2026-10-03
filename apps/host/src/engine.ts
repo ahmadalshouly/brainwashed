@@ -8,7 +8,11 @@ import type {
   EngineEvent,
   EngineState,
   HostInfo,
+  GatewayEvent,
   InstalledModel,
+  PairedDevice,
+  PairingOffer,
+  PhoneAccessStatus,
   SkillList,
 } from "@brainwashed/api";
 
@@ -30,6 +34,11 @@ export const engine = {
   deleteSkill: (name: string) => invoke<void>("delete_skill", { name }),
   setSkillEnabled: (name: string, enabled: boolean) =>
     invoke<void>("set_skill_enabled", { name, enabled }),
+  phoneStatus: () => invoke<PhoneAccessStatus>("phone_status"),
+  setPhoneAccess: (enabled: boolean) => invoke<PhoneAccessStatus>("set_phone_access", { enabled }),
+  createPairingOffer: () => invoke<PairingOffer>("create_pairing_offer"),
+  devices: () => invoke<PairedDevice[]>("paired_devices"),
+  removeDevice: (id: string) => invoke<void>("remove_device", { id }),
   chat(messages: ChatMessage[], onEvent: (e: ChatEvent) => void) {
     const channel = new Channel<ChatEvent>();
     channel.onmessage = onEvent;
@@ -39,6 +48,13 @@ export const engine = {
 
 export function onEngineEvent(handler: (e: EngineEvent) => void) {
   const unlisten = listen<EngineEvent>("engine", (e) => handler(e.payload));
+  return () => {
+    unlisten.then((f) => f());
+  };
+}
+
+export function onGatewayEvent(handler: (e: GatewayEvent) => void) {
+  const unlisten = listen<GatewayEvent>("gateway", (e) => handler(e.payload));
   return () => {
     unlisten.then((f) => f());
   };

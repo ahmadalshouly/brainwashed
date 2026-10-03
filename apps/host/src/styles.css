@@ -309,3 +309,37 @@ code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
 }
+
+.phones {
+  padding: 24px;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.phones h2,
+.phones h3 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.qr {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.qr img {
+  border-radius: 8px;
+  background: #fff;
+}
+
+.banner.ok {
+  color: var(--ok);
+  border: 1px solid var(--ok);
+}

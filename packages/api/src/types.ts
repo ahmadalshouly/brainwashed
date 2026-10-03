@@ -87,3 +87,28 @@ export type EngineEvent =
   | { type: "downloadFailed"; repo: string; error: string }
   | { type: "modelsChanged" }
   | { type: "skillsChanged" };
+
+/** A phone paired with the host. Mirrors `Device` in crates/gateway. */
+export interface PairedDevice {
+  id: string;
+  name: string;
+  publicKey: string;
+  pairedAt: number;
+  lastSeen: number | null;
+}
+
+export interface PhoneAccessStatus {
+  running: boolean;
+  port: number | null;
+  addresses: string[];
+  hostId: string;
+}
+
+export interface PairingOffer {
+  url: string;
+  expiresAt: number;
+  addresses: string[];
+  port: number;
+}
+
+export type GatewayEvent = { type: "devicePaired"; device: PairedDevice } | { type: "devicesChanged" };

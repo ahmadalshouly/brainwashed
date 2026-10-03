@@ -4,6 +4,7 @@ use brainwashed_core::{
     CatalogItem, ChatEvent, ChatMessage, Engine, EngineState, Hardware, HostInfo, InstalledModel,
     SamplingOptions, Settings, SkillList,
 };
+use brainwashed_gateway::{Device, Gateway, GatewayStatus, PairingOffer};
 use std::path::PathBuf;
 use tauri::{ipc::Channel, State};
 
@@ -124,4 +125,45 @@ pub async fn chat(
         })
         .await
         .map_err(err)
+}
+
+#[tauri::command]
+pub fn phone_status(gateway: State<Gateway>) -> GatewayStatus {
+    gateway.status()
+}
+
+/// Turns phone access on or off and remembers the choice.
+#[tauri::command]
+pub async fn set_phone_access(
+    engine: State<'_, Engine>,
+    gateway: State<'_, Gateway>,
+    enabled: bool,
+) -> CmdResult<GatewayStatus> {
+    let mut settings = engine.settings();
+    if enabled {
+        gateway
+            .start(settings.phone_port)
+            .await
+            .map_err(|e| format!("Could not open port {}: {e}", settings.phone_port))?;
+    } else {
+        gateway.stop();
+    }
+    settings.phone_access = enabled;
+    engine.update_settings(settings).map_err(err)?;
+    Ok(gateway.status())
+}
+
+#[tauri::command]
+pub fn create_pairing_offer(gateway: State<Gateway>) -> CmdResult<PairingOffer> {
+    gateway.create_pairing_offer().map_err(err)
+}
+
+#[tauri::command]
+pub fn paired_devices(gateway: State<Gateway>) -> Vec<Device> {
+    gateway.devices()
+}
+
+#[tauri::command]
+pub fn remove_device(gateway: State<Gateway>, id: String) -> CmdResult<()> {
+    gateway.remove_device(&id).map_err(err)
 }

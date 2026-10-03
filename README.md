@@ -52,6 +52,16 @@ How it works:
 
 See [`skills-examples`](skills-examples) for the skills that ship with the app.
 
+## Using it from your phone
+
+1. On the computer, open **Phones**, turn on **Allow phones on this network**, then click **Pair a phone**.
+2. In the BrainWashed phone app, tap **Pair a computer** and scan the QR code.
+3. Chat, switch models and turn skills on or off from the phone.
+
+Phone and computer must be on the same network for now. Traffic is end-to-end encrypted with keys exchanged through the QR code; see [docs/phone-protocol.md](docs/phone-protocol.md).
+
+To try the phone app without a phone, run `pnpm --filter @brainwashed/mobile web` and paste the pairing link instead of scanning it.
+
 ## License
 
 [Apache-2.0](LICENSE)
