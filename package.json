@@ -1,0 +1,21 @@
+{
+  "name": "brainwashed",
+  "private": true,
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "build": "pnpm -r --if-present build",
+    "host:dev": "pnpm --filter @brainwashed/host tauri dev",
+    "mobile:start": "pnpm --filter @brainwashed/mobile start"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
