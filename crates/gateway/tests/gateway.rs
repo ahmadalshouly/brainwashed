@@ -264,3 +264,99 @@ async fn serves_the_web_chat_with_a_browser_pairing_link() {
         .unwrap();
     assert_eq!(missing.status(), 404);
 }
+
+async fn start_relay() -> (brainwashed_relay::Relay, String) {
+    let relay = brainwashed_relay::Relay::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = relay.router();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (relay, url)
+}
+
+async fn wait_for_relay(gw: &Gateway) {
+    for _ in 0..100 {
+        if gw.status().relay.is_some_and(|r| r.connected) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("never connected to the relay: {:?}", gw.status().relay);
+}
+
+#[tokio::test]
+async fn works_through_the_relay() {
+    let (relay, relay_url) = start_relay().await;
+    let (gw, _, _, _dir) = setup().await;
+    gw.set_relay_url(Some(&relay_url)).unwrap();
+    wait_for_relay(&gw).await;
+
+    // The pairing link tells devices where the relay is.
+    let url = gw.create_pairing_offer().unwrap().url;
+    let r = query(&url, "r").replace("%3A", ":").replace("%2F", "/");
+    assert_eq!(r, relay_url);
+    let host_key = query(&url, "k");
+    assert!(relay.is_connected(&host_key));
+
+    // Same requests as on the local network, under /h/<host key>.
+    let mut phone = Phone::from_offer(&url, 0);
+    phone.base = format!("{relay_url}/h/{host_key}");
+    phone.pair(&query(&url, "t")).await.unwrap();
+    let info = phone.call("info", Value::Null).await;
+    assert_eq!(info["ok"]["version"], "0.1.0");
+
+    // Replays are still refused: the host does the checking, not the relay.
+    let call = phone.sealed_call("info", Value::Null, now_ms());
+    assert_eq!(phone.post(&call).await.0, 200);
+    assert_eq!(phone.post(&call).await.0, 401);
+
+    // Streams come through frame by frame.
+    let call = phone.sealed_call(
+        "chat",
+        json!({ "messages": [{ "role": "user", "content": "hi" }] }),
+        now_ms(),
+    );
+    let (status, text) = phone.post(&call).await;
+    assert_eq!(status, 200);
+    let frames: Vec<Value> = text.lines().map(|l| phone.open_line(l)).collect();
+    assert!(frames.last().unwrap()["error"]
+        .as_str()
+        .unwrap()
+        .contains("no model"));
+
+    // The web chat is only served on the local network.
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let page = client
+        .get(format!("{relay_url}/h/{host_key}/"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(page.status(), 404);
+
+    // Turning access off disconnects from the relay.
+    gw.stop();
+    for _ in 0..100 {
+        if !relay.is_connected(&host_key) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(!relay.is_connected(&host_key));
+    let (status, text) = phone
+        .post(&phone.sealed_call("info", Value::Null, now_ms()))
+        .await;
+    assert_eq!(status, 503, "{text}");
+    assert!(text.contains("offline"));
+}
+
+#[tokio::test]
+async fn relay_settings_are_checked() {
+    let (gw, _, _, _dir) = setup().await;
+    assert!(gw.set_relay_url(Some("relay.example.org")).is_err());
+    gw.set_relay_url(Some("https://relay.example.org/"))
+        .unwrap();
+    assert_eq!(gw.status().relay.unwrap().url, "https://relay.example.org");
+    gw.set_relay_url(None).unwrap();
+    assert!(gw.status().relay.is_none());
+    assert!(!gw.create_pairing_offer().unwrap().url.contains("&r="));
+}

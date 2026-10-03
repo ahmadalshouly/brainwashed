@@ -36,6 +36,7 @@ export const engine = {
     invoke<void>("set_skill_enabled", { name, enabled }),
   phoneStatus: () => invoke<PhoneAccessStatus>("phone_status"),
   setPhoneAccess: (enabled: boolean) => invoke<PhoneAccessStatus>("set_phone_access", { enabled }),
+  setRelayUrl: (url: string | null) => invoke<PhoneAccessStatus>("set_relay_url", { url }),
   createPairingOffer: () => invoke<PairingOffer>("create_pairing_offer"),
   devices: () => invoke<PairedDevice[]>("paired_devices"),
   removeDevice: (id: string) => invoke<void>("remove_device", { id }),

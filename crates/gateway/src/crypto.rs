@@ -27,6 +27,7 @@ pub struct Envelope {
     pub c: String,
 }
 
+#[derive(Clone)]
 pub struct HostKeys {
     secret: SecretKey,
 }

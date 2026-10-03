@@ -24,6 +24,9 @@ pub struct Settings {
     /// Let paired phones on the local network use this computer.
     pub phone_access: bool,
     pub phone_port: u16,
+    /// Relay that devices away from home connect through, e.g.
+    /// `https://relay.example.org`. None keeps access to the local network.
+    pub relay_url: Option<String>,
 }
 
 impl Default for Settings {
@@ -39,6 +42,7 @@ impl Default for Settings {
             disabled_skills: Vec::new(),
             phone_access: false,
             phone_port: 47860,
+            relay_url: None,
         }
     }
 }

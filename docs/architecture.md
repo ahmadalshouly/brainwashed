@@ -9,7 +9,7 @@ _Draft 1, 2026-10-03. Turns a personal laptop into a private AI host, with a pho
 | **Host app** (macOS, Windows, Linux) | Tray app that downloads and runs models, loads skills, serves an API, pairs phones | Tauri 2 (Rust core + React/TypeScript UI) |
 | **Model runtime** | Runs any open GGUF model on CPU or GPU | llama.cpp `llama-server`, bundled as a sidecar |
 | **Skills engine** | Loads user-written `.md` skills into the model at inference time | Rust module in the host, small embedding model for routing |
-| **Connectivity** | Phone reaches the laptop at home or away, end-to-end encrypted | LAN first (mDNS + QR pairing), then iroh (QUIC P2P with relay fallback) |
+| **Connectivity** | Phone reaches the laptop at home or away, end-to-end encrypted | LAN first (QR pairing), then a self-hostable relay that forwards end-to-end encrypted traffic |
 | **Mobile app** (iOS, Android) | Chat, pick model, manage skills, pair with host | React Native + Expo (shares TS types and API client with the host UI) |
 | **BrainWashed model** | Ahmad's fine-tuned 2-3B model, the default download | QLoRA fine-tune of an Apache-2.0 base, shipped as GGUF Q4_K_M (~2 GB) |
 
@@ -17,7 +17,7 @@ Why these choices:
 - **Tauri over Electron:** ~10 MB installers instead of ~150 MB, Rust core is a good home for process management and networking, one codebase for all three desktops.
 - **llama.cpp over writing our own runtime:** it already covers Metal (Apple), CUDA, ROCm and Vulkan (most Windows/Linux GPUs) and CPU, reads GGUF (the format nearly every open model on Hugging Face ships in), and exposes an OpenAI-compatible HTTP API. Ollama is an option too, but bundling llama.cpp directly avoids a second daemon and gives us control over context, sampling and grammar-constrained output. We can still let advanced users point BrainWashed at an existing Ollama or LM Studio server.
 - **React Native + Expo over Flutter:** the host UI is already React/TS, so the API client, types and much of the chat UI logic are shared. Expo handles iOS/Android builds and OTA updates.
-- **iroh for remote access:** open source Rust, does NAT hole-punching and falls back to relays (which users can self-host), and encrypts end to end with device keys. It avoids asking users to open router ports or sign up for a third-party VPN. Tailscale/WireGuard stays a documented alternative for people who already use it.
+- **A relay for remote access:** the host keeps an outgoing WebSocket to a small relay (`crates/relay`), and devices send their already end-to-end encrypted requests through it. No router ports, no third-party VPN, and users can run their own relay. iroh was the first plan, but phones (React Native) and browsers can't speak it without native modules, while the relay works with plain HTTPS. Tailscale/WireGuard stays a documented alternative for people who already use it. See [relay.md](relay.md).
 
 ## 2. System diagram
 
@@ -26,7 +26,7 @@ Why these choices:
  ┌───────────────┐   paired, E2E enc.   ┌──────────────────────────────────┐
  │ Chat UI       │◀───────────────────▶ │ Gateway (auth, device keys)      │
  │ Skills mgmt   │  LAN: TLS, pinned    │   │                              │
- │ Host picker   │  Away: iroh QUIC     │   ▼                              │
+ │ Host picker   │  Away: relay (HTTPS) │   ▼                              │
  └───────────────┘                      │ Orchestrator                     │
                                         │   ├─ Skills engine (.md files)   │
                                         │   ├─ Conversation store (SQLite) │
@@ -89,7 +89,7 @@ When the user asks for a meal plan:
 
 - **Pairing:** host shows a QR code containing its public key, a one-time token and LAN address. Phone scans, both sides store each other's keys. Hosts can revoke a device at any time.
 - **At home (Phase 3):** discover via mDNS, connect over TLS with the host's self-signed cert pinned from the QR code.
-- **Away (Phase 4):** iroh connection addressed by the host's key; direct P2P when NAT allows, otherwise through a relay that only sees encrypted traffic. Default to the public iroh relays, let users run their own.
+- **Away (Phase 4):** through a relay addressed by the host's key, which only sees encrypted traffic. Users run their own or use one they trust; direct P2P when the network allows is a later optimization.
 - **Defaults that keep users safe:** nothing listens on public interfaces; every request needs a paired device key; rate limiting; no telemetry unless opted in.
 - **Laptop asleep:** show "host offline" clearly on the phone; host setting to prevent sleep while plugged in. Wake-on-LAN is a stretch goal.
 

@@ -45,6 +45,19 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  relay-image:
+    name: Relay (Docker image)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f crates/relay/Dockerfile -t brainwashed-relay .
+      - name: Smoke test
+        run: |
+          docker run -d --rm -p 8080:8080 --name relay brainwashed-relay
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/ && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8080/ | grep -q brainwashed-relay
+          docker stop relay
+
   llama-e2e:
     name: End to end with a real llama-server
     runs-on: ubuntu-latest

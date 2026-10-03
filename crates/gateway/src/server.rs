@@ -1,5 +1,6 @@
 use crate::crypto::{self, Envelope, HostKeys};
 use crate::devices::{Device, DeviceStore};
+use crate::relay::{self, RelayClient, RelayStatus};
 use crate::{Error, Result};
 use axum::{
     body::Body,
@@ -47,6 +48,8 @@ pub struct GatewayStatus {
     pub port: Option<u16>,
     pub addresses: Vec<IpAddr>,
     pub host_id: String,
+    /// Remote access through a relay, when one is set.
+    pub relay: Option<RelayStatus>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,6 +72,9 @@ struct Inner {
     /// Nonces of recent requests with their arrival time (ms), oldest first.
     seen_nonces: Mutex<VecDeque<(u64, String)>>,
     running: Mutex<Option<Running>>,
+    /// The relay address, and the live connection while the gateway runs.
+    relay_url: Mutex<Option<String>>,
+    relay: Mutex<Option<RelayClient>>,
     events: broadcast::Sender<GatewayEvent>,
 }
 
@@ -88,6 +94,8 @@ impl Gateway {
                 offers: Mutex::new(HashMap::new()),
                 seen_nonces: Mutex::new(VecDeque::new()),
                 running: Mutex::new(None),
+                relay_url: Mutex::new(None),
+                relay: Mutex::new(None),
                 events: broadcast::channel(32).0,
             }),
         })
@@ -116,12 +124,40 @@ impl Gateway {
         });
         tracing::info!("phone gateway listening on {addr}");
         *self.inner.running.lock().unwrap() = Some(Running { addr, shutdown: tx });
+        self.restart_relay();
         Ok(addr)
     }
 
     pub fn stop(&self) {
         if let Some(r) = self.inner.running.lock().unwrap().take() {
             let _ = r.shutdown.send(());
+        }
+        self.inner.relay.lock().unwrap().take();
+    }
+
+    /// Sets or clears the relay that devices away from home connect
+    /// through. While the gateway runs, the host stays connected to it.
+    pub fn set_relay_url(&self, url: Option<&str>) -> Result<()> {
+        let url = url
+            .filter(|u| !u.trim().is_empty())
+            .map(relay::normalize_url)
+            .transpose()
+            .map_err(Error::Invalid)?;
+        *self.inner.relay_url.lock().unwrap() = url;
+        self.restart_relay();
+        Ok(())
+    }
+
+    fn restart_relay(&self) {
+        let mut relay = self.inner.relay.lock().unwrap();
+        relay.take();
+        let running = self.inner.running.lock().unwrap().is_some();
+        if let (true, Some(url)) = (running, self.inner.relay_url.lock().unwrap().clone()) {
+            *relay = Some(RelayClient::start(
+                url,
+                self.inner.keys.clone(),
+                self.router(),
+            ));
         }
     }
 
@@ -138,7 +174,25 @@ impl Gateway {
             port,
             addresses: lan_addresses(),
             host_id: self.inner.keys.host_id(),
+            relay: self.relay_status(),
         }
+    }
+
+    fn relay_status(&self) -> Option<RelayStatus> {
+        let url = self.inner.relay_url.lock().unwrap().clone()?;
+        Some(
+            self.inner
+                .relay
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|r| r.status())
+                .unwrap_or(RelayStatus {
+                    url,
+                    connected: false,
+                    error: None,
+                }),
+        )
     }
 
     /// A one-time pairing link for the QR code. The gateway must be running.
@@ -161,11 +215,14 @@ impl Gateway {
             .map(|a| a.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        let query = format!(
+        let mut query = format!(
             "v={PROTOCOL_VERSION}&k={}&t={token}&a={addr_list}&p={port}&n={}",
             self.inner.keys.public_key_b64url(),
             percent_encode(&self.inner.engine.host_name()),
         );
+        if let Some(url) = self.inner.relay_url.lock().unwrap().as_deref() {
+            query.push_str(&format!("&r={}", percent_encode(url)));
+        }
         let web_host = addresses
             .first()
             .map(|a| a.to_string())
@@ -190,7 +247,7 @@ impl Gateway {
         Ok(())
     }
 
-    fn router(&self) -> Router {
+    pub(crate) fn router(&self) -> Router {
         Router::new()
             .route("/hello", get(hello))
             .route("/pair", post(pair))

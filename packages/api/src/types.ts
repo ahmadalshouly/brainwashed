@@ -102,6 +102,15 @@ export interface PhoneAccessStatus {
   port: number | null;
   addresses: string[];
   hostId: string;
+  /** Remote access through a relay, when one is set. */
+  relay: RelayStatus | null;
+}
+
+export interface RelayStatus {
+  url: string;
+  connected: boolean;
+  /** Why the last attempt failed, while not connected. */
+  error: string | null;
 }
 
 export interface PairingOffer {

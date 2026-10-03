@@ -19,7 +19,7 @@ This protocol is a public, versioned interface. The web chat and the official ap
 ## Pairing
 
 1. The user turns on device access and clicks **Pair a device**. The host has two forms of the same link:
-   - App link: `brainwashed://pair?v=1&k=<host public key>&t=<one-time token>&a=<LAN IPs>&p=<port>&n=<host name>`
+   - App link: `brainwashed://pair?v=1&k=<host public key>&t=<one-time token>&a=<LAN IPs>&p=<port>&n=<host name>`, plus `&r=<relay URL>` when the computer uses a relay for access away from home
    - Web link: `http://<LAN IP>:<port>/#pair?v=1&k=…` with the same fields after `#pair?`.
 
    The QR code shows the web link, so a phone camera opens the web chat. Clients must accept both forms.
@@ -48,6 +48,12 @@ Methods: `info`, `state`, `models`, `loadModel { id }`, `skills`, `setSkillEnabl
 - `{ event: ChatEvent }`, sent while the reply streams. The first event is always the `skills` event.
 - `{ done: answer }` or `{ error }`, sent once at the end.
 
+## Relay
+
+When the pairing link has `r`, the host also accepts the same requests through that relay, at `<r>/h/<k>/hello`, `<r>/h/<k>/pair` and `<r>/h/<k>/rpc`, where `k` is the host key exactly as it appears in the link. Bodies, replies and streaming are unchanged. Clients should try the local addresses first and the relay last, and remember whichever answered.
+
+The relay answers `503` with `{ error }` when the computer isn't connected to it, and `429` when too many requests are in flight. [relay.md](relay.md) describes how the relay works and what it can see.
+
 ## Web chat
 
 `GET /` and every path except `/hello`, `/pair` and `/rpc` serve the web chat (`apps/web`), a single-page app built into the host.
@@ -59,6 +65,6 @@ Methods: `info`, `state`, `models`, `loadModel { id }`, `skills`, `setSkillEnabl
 
 ## Not covered yet
 
-- **Remote access away from home:** Phase 4, a peer-to-peer connection with relay fallback.
+- **Direct connections away from home:** traffic away from home always goes through the relay. A direct peer-to-peer path when the network allows it would save a hop.
 - **Automatic discovery when the computer's IP address changes:** for now, the app tries every address from the QR code and remembers the last one that worked. If all of them fail, pair again.
-- **Forward secrecy:** a stolen host key would expose recorded traffic. Moving to ephemeral session keys is planned alongside Phase 4.
+- **Forward secrecy:** a stolen host key would expose recorded traffic, including traffic recorded at a relay. Ephemeral session keys are planned.

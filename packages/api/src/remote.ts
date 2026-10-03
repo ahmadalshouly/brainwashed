@@ -11,6 +11,8 @@ export interface PairingInfo {
   addresses: string[];
   port: number;
   hostName: string;
+  /** Where to reach the host through its relay when away from home. */
+  relay?: string;
 }
 
 const PAIRING_LINK = /^(?:brainwashed:\/\/pair|https?:\/\/[^#]*#pair)\?(.*)$/;
@@ -39,17 +41,23 @@ export function parsePairingUrl(url: string, at?: { address: string; port: numbe
     return v;
   };
   if (get("v") !== "1") throw new Error("This pairing code needs a newer version of the app.");
+  const hostKey = get("k");
   // The web chat can only reach the computer that served it, wherever that is.
   const addresses = at ? [at.address] : (params.get("a") ?? "").split(",").filter(Boolean);
-  if (addresses.length === 0) {
+  const relayUrl = at ? undefined : params.get("r")?.replace(/\/+$/, "");
+  if (relayUrl !== undefined && !/^https?:\/\/[^/?#\s]+/.test(relayUrl)) {
+    throw new Error("This pairing code has a bad relay address.");
+  }
+  if (addresses.length === 0 && !relayUrl) {
     throw new Error("The computer isn't on a local network. Connect it to Wi-Fi, then show a new code.");
   }
   return {
-    hostKey: get("k"),
+    hostKey,
     token: get("t"),
     addresses,
     port: at ? at.port : Number(get("p")),
     hostName: params.get("n") ?? "Computer",
+    ...(relayUrl ? { relay: `${relayUrl}/h/${hostKey}` } : {}),
   };
 }
 
@@ -64,7 +72,9 @@ export interface PairedHost {
   secretKey: string;
   addresses: string[];
   port: number;
-  /** The address that last worked, tried first. */
+  /** Base URL through the host's relay, tried after the local addresses. */
+  relay?: string;
+  /** The address (or relay URL) that last worked, tried first. */
   lastAddress?: string;
 }
 
@@ -116,9 +126,17 @@ async function errorFrom(res: { status: number; text(): Promise<string> }): Prom
 
 /** How long to wait for an address to answer before trying the next one. */
 const CONNECT_TIMEOUT_MS = 6000;
+/** Away from home, local addresses don't answer; give up on them sooner when a relay can take over. */
+const LAN_TIMEOUT_WITH_RELAY_MS = 2500;
+
+/** A local address, or a relay URL, which is used as is. */
+function baseUrl(address: string, port: number): string {
+  return /^https?:\/\//.test(address) ? address : `http://${address}:${port}`;
+}
 
 /**
- * Tries each address the host advertised and returns the first that answers.
+ * Tries each address in turn and returns the first that answers. Local
+ * addresses are host names or IPs; a relay is a full URL.
  * Each attempt gets a signal that aborts if no response arrives in time.
  */
 async function reach<T>(
@@ -127,22 +145,30 @@ async function reach<T>(
   attempt: (base: string, signal: AbortSignal) => Promise<T>,
   outer?: AbortSignal,
 ): Promise<{ result: T; address: string }> {
+  const hasRelay = addresses.some((a) => /^https?:\/\//.test(a));
   for (const address of addresses) {
+    const isRelay = /^https?:\/\//.test(address);
     const controller = new AbortController();
     const onOuterAbort = () => controller.abort();
     outer?.addEventListener("abort", onOuterAbort);
-    const timer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
+    const timeout = hasRelay && !isRelay ? LAN_TIMEOUT_WITH_RELAY_MS : CONNECT_TIMEOUT_MS;
+    const timer = setTimeout(() => controller.abort(), timeout);
     try {
-      return { result: await attempt(`http://${address}:${port}`, controller.signal), address };
+      return { result: await attempt(baseUrl(address, port), controller.signal), address };
     } catch (e) {
-      if (e instanceof HostReplyError || outer?.aborted) throw e;
+      // A relay saying the computer is offline is worth reporting as is.
+      if (e instanceof HostReplyError && !(isRelay && e.status === 503 && address !== addresses[addresses.length - 1])) throw e;
+      if (outer?.aborted) throw e;
       // Network failure or timeout: try the next address.
     } finally {
       clearTimeout(timer);
+      outer?.removeEventListener("abort", onOuterAbort);
     }
   }
   throw new Error(
-    "Couldn't reach the computer. Check that it's on, BrainWashed is open with phone access on, and both are on the same Wi-Fi.",
+    hasRelay
+      ? "Couldn't reach the computer. Check that it's on and BrainWashed is open with device access on."
+      : "Couldn't reach the computer. Check that it's on, BrainWashed is open with phone access on, and both are on the same Wi-Fi.",
   );
 }
 
@@ -154,7 +180,8 @@ export async function pairWithHost(
   const keys = nacl.box.keyPair();
   const hostKey = fromBase64(info.hostKey);
   const env = seal({ token: info.token, deviceName }, hostKey, keys.secretKey);
-  const { result, address } = await reach(info.addresses, info.port, async (base, signal) => {
+  const candidates = info.relay ? [...info.addresses, info.relay] : info.addresses;
+  const { result, address } = await reach(candidates, info.port, async (base, signal) => {
     const res = await fetchImpl(`${base}/pair`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -177,6 +204,7 @@ export async function pairWithHost(
     secretKey: toBase64(keys.secretKey),
     addresses: info.addresses,
     port: info.port,
+    ...(info.relay ? { relay: info.relay } : {}),
     lastAddress: address,
   };
 }
@@ -206,8 +234,9 @@ export class RemoteHost {
   setSkillEnabled = (name: string, enabled: boolean) => this.call<null>("setSkillEnabled", { name, enabled });
 
   private addresses(): string[] {
-    const { lastAddress, addresses } = this.host;
-    return lastAddress ? [lastAddress, ...addresses.filter((a) => a !== lastAddress)] : addresses;
+    const { lastAddress, relay } = this.host;
+    const all = relay ? [...this.host.addresses, relay] : this.host.addresses;
+    return lastAddress && all.includes(lastAddress) ? [lastAddress, ...all.filter((a) => a !== lastAddress)] : all;
   }
 
   private async post(method: string, params: unknown, signal?: AbortSignal) {

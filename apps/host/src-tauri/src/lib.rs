@@ -19,6 +19,9 @@ pub fn run() {
             let version = app.package_info().version.to_string();
             let engine = Engine::new(EngineConfig::new(&data_dir, version))?;
             let gateway = Gateway::new(engine.clone(), &data_dir)?;
+            if let Err(e) = gateway.set_relay_url(engine.settings().relay_url.as_deref()) {
+                tracing::warn!("ignoring the saved relay address: {e}");
+            }
 
             let mut gateway_events = gateway.subscribe();
             let handle = app.handle().clone();
@@ -94,6 +97,7 @@ pub fn run() {
             commands::chat,
             commands::phone_status,
             commands::set_phone_access,
+            commands::set_relay_url,
             commands::create_pairing_offer,
             commands::paired_devices,
             commands::remove_device,
