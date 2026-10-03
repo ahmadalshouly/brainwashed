@@ -3,12 +3,13 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import type {
   CatalogItem,
+  ChatEvent,
   ChatMessage,
-  Delta,
   EngineEvent,
   EngineState,
   HostInfo,
   InstalledModel,
+  SkillList,
 } from "@brainwashed/api";
 
 export const engine = {
@@ -22,10 +23,17 @@ export const engine = {
   deleteModel: (id: string) => invoke<void>("delete_model", { id }),
   load: (id: string) => invoke<void>("load_model", { id }),
   unload: () => invoke<void>("unload_model"),
-  chat(messages: ChatMessage[], onDelta: (d: Delta) => void) {
-    const channel = new Channel<Delta>();
-    channel.onmessage = onDelta;
-    return invoke<string>("chat", { messages, onDelta: channel });
+  skills: () => invoke<SkillList>("skills"),
+  skillSource: (name: string) => invoke<string>("skill_source", { name }),
+  saveSkill: (source: string, previousName?: string) =>
+    invoke<string>("save_skill", { source, previousName: previousName ?? null }),
+  deleteSkill: (name: string) => invoke<void>("delete_skill", { name }),
+  setSkillEnabled: (name: string, enabled: boolean) =>
+    invoke<void>("set_skill_enabled", { name, enabled }),
+  chat(messages: ChatMessage[], onEvent: (e: ChatEvent) => void) {
+    const channel = new Channel<ChatEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("chat", { messages, onEvent: channel });
   },
 };
 

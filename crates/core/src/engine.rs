@@ -1,12 +1,13 @@
 use crate::settings::Settings;
+use crate::skills::{ChatEvent, SkillState};
 use crate::store::{self, InstalledModel, InstalledRuntime};
 use crate::{Error, Result};
 use brainwashed_runtime::{
     catalog::{self, CatalogEntry},
-    chat::{self, Delta, SamplingOptions},
+    chat::{self, SamplingOptions},
     download,
     llama::{self, LlamaServer, ServerOptions},
-    release, ChatMessage, Hardware, Role,
+    release, ChatMessage, Hardware,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -89,6 +90,7 @@ pub enum Event {
         error: String,
     },
     ModelsChanged,
+    SkillsChanged,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -103,10 +105,10 @@ pub struct CatalogItem {
 
 #[derive(Clone)]
 pub struct Engine {
-    inner: Arc<Inner>,
+    pub(crate) inner: Arc<Inner>,
 }
 
-struct Inner {
+pub(crate) struct Inner {
     config: EngineConfig,
     client: reqwest::Client,
     /// Talks to llama-server on localhost, bypassing any system proxy.
@@ -117,7 +119,10 @@ struct Inner {
     state: RwLock<EngineState>,
     server: Mutex<Option<LlamaServer>>,
     base_url: RwLock<Option<String>>,
-    events: broadcast::Sender<Event>,
+    /// Context size of the loaded model as llama-server reports it.
+    pub(crate) loaded_context: RwLock<Option<u32>>,
+    pub(crate) events: broadcast::Sender<Event>,
+    pub(crate) skills: RwLock<SkillState>,
 }
 
 impl Engine {
@@ -135,6 +140,7 @@ impl Engine {
         let settings: Settings = store::load(&config.data_dir.join("settings.json"))?;
         let models: Vec<InstalledModel> = store::load(&config.data_dir.join("models.json"))?;
         kill_stale_server(&config.data_dir);
+        let skills = SkillState::open(&config.data_dir.join("skills"))?;
         Ok(Engine {
             inner: Arc::new(Inner {
                 client,
@@ -145,7 +151,9 @@ impl Engine {
                 state: RwLock::new(EngineState::Idle),
                 server: Mutex::new(None),
                 base_url: RwLock::new(None),
+                loaded_context: RwLock::new(None),
                 events: broadcast::channel(256).0,
+                skills: RwLock::new(skills),
                 config,
             }),
         })
@@ -155,7 +163,7 @@ impl Engine {
         self.inner.events.subscribe()
     }
 
-    fn emit(&self, event: Event) {
+    pub(crate) fn emit(&self, event: Event) {
         // No subscribers is fine.
         let _ = self.inner.events.send(event);
     }
@@ -458,6 +466,7 @@ impl Engine {
                     let _ = std::fs::write(pid_file(self.data_dir()), pid.to_string());
                 }
                 *self.inner.base_url.write().unwrap() = Some(started.base_url());
+                *self.inner.loaded_context.write().unwrap() = started.context_size();
                 *server = Some(started);
                 self.edit_settings(|s| s.active_model = Some(model.id.clone()))?;
                 self.set_state(EngineState::Ready { model: model.id });
@@ -495,29 +504,13 @@ impl Engine {
 
     // ----- chat -----
 
-    /// Builds the prompt the model actually sees for a conversation.
-    pub fn build_prompt(&self, conversation: &[ChatMessage]) -> Vec<ChatMessage> {
-        let mut system = self.settings().system_prompt;
-        // A client-supplied system message is appended to ours, never replaces it.
-        let mut messages = Vec::with_capacity(conversation.len() + 1);
-        for m in conversation {
-            if m.role == Role::System {
-                system.push_str("\n\n");
-                system.push_str(&m.content);
-            } else {
-                messages.push(m.clone());
-            }
-        }
-        messages.insert(0, ChatMessage::new(Role::System, system));
-        messages
-    }
-
-    /// Streams the model's reply to `conversation`, returning the full answer.
+    /// Streams the model's reply to `conversation`. The first event names the
+    /// skills used; the rest are pieces of the answer. Returns the full answer.
     pub async fn chat(
         &self,
         conversation: &[ChatMessage],
         sampling: &SamplingOptions,
-        on_delta: impl FnMut(Delta),
+        mut on_event: impl FnMut(ChatEvent),
     ) -> Result<String> {
         let base_url = self
             .inner
@@ -526,8 +519,14 @@ impl Engine {
             .unwrap()
             .clone()
             .ok_or_else(|| Error::Invalid("no model is loaded yet".into()))?;
-        let prompt = self.build_prompt(conversation);
-        Ok(chat::stream_chat(&self.inner.local, &base_url, &prompt, sampling, on_delta).await?)
+        let (prompt, skills) = self.build_prompt(conversation);
+        on_event(ChatEvent::Skills { names: skills });
+        Ok(
+            chat::stream_chat(&self.inner.local, &base_url, &prompt, sampling, |d| {
+                on_event(d.into())
+            })
+            .await?,
+        )
     }
 }
 

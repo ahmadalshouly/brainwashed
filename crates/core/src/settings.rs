@@ -19,6 +19,8 @@ pub struct Settings {
     /// Model loaded at startup.
     pub active_model: Option<String>,
     pub system_prompt: String,
+    /// Skills the user switched off.
+    pub disabled_skills: Vec<String>,
 }
 
 impl Default for Settings {
@@ -31,6 +33,7 @@ impl Default for Settings {
             llama_server_path: None,
             active_model: None,
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
+            disabled_skills: Vec::new(),
         }
     }
 }

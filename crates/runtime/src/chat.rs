@@ -92,6 +92,11 @@ pub async fn stream_chat(
     if !res.status().is_success() {
         let status = res.status();
         let body = res.text().await.unwrap_or_default();
+        if body.contains("exceed_context_size_error") {
+            return Err(Error::other(
+                "This conversation no longer fits in the model's memory. Start a new chat, or raise the context size in settings.",
+            ));
+        }
         return Err(Error::other(format!(
             "model server returned {status}: {body}"
         )));

@@ -31,7 +31,26 @@ pnpm typecheck && pnpm test && cargo test --workspace
 
 ## Skills
 
-A skill is a folder with a `SKILL.md` file: YAML frontmatter describing it, followed by instructions in plain markdown. The host picks the relevant skill for each message and adds it to the model's prompt, so a new skill works immediately with no retraining. See [`skills-examples/meal-planner`](skills-examples/meal-planner/SKILL.md).
+A skill is a folder with a `SKILL.md` file: YAML frontmatter describing it, followed by instructions in plain markdown.
+
+```markdown
+---
+name: email-writer
+description: Drafts and rewrites emails in the right tone for the recipient.
+triggers: [write an email, draft an email]
+---
+When the user wants an email written:
+1. ...
+```
+
+How it works:
+
+- Skills live in the app's data folder under `skills/`, one subfolder per skill. Edit them in the app's Skills tab or in any text editor; changes apply within seconds.
+- Every enabled skill's `name` and `description` go into the system prompt as a short index.
+- For each message the host picks at most two relevant skills and adds their full instructions. A `triggers` phrase in the message always selects a skill; otherwise skills are matched by the distinctive words they share with the message (and the previous message, so follow-ups keep their skill).
+- Skills are never trained into the model, so a new skill works on the next message.
+
+See [`skills-examples`](skills-examples) for the skills that ship with the app.
 
 ## License
 

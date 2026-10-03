@@ -13,7 +13,7 @@ def bytes_to_unicode():
 
 out = sys.argv[1]
 vocab = bytes_to_unicode() + ["<|im_start|>", "<|im_end|>"]
-n_vocab, n_embd, n_ff, n_head, n_layer, ctx = len(vocab), 64, 128, 4, 2, 512
+n_vocab, n_embd, n_ff, n_head, n_layer, ctx = len(vocab), 64, 128, 4, 2, 4096
 w = gguf.GGUFWriter(out, "llama")
 w.add_name("tiny-test")
 w.add_context_length(ctx); w.add_embedding_length(n_embd); w.add_block_count(n_layer)
