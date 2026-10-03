@@ -348,3 +348,14 @@ code.link {
   user-select: all;
   overflow-wrap: anywhere;
 }
+
+.about {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.about .update {
+  text-align: left;
+  font-weight: 600;
+}

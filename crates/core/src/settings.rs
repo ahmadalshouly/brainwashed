@@ -27,6 +27,8 @@ pub struct Settings {
     /// Relay that devices away from home connect through, e.g.
     /// `https://relay.example.org`. None keeps access to the local network.
     pub relay_url: Option<String>,
+    /// Look on GitHub for newer releases at startup.
+    pub check_for_updates: bool,
 }
 
 impl Default for Settings {
@@ -43,6 +45,7 @@ impl Default for Settings {
             phone_access: false,
             phone_port: 47860,
             relay_url: None,
+            check_for_updates: true,
         }
     }
 }

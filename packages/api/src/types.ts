@@ -113,6 +113,12 @@ export interface RelayStatus {
   error: string | null;
 }
 
+export interface UpdateInfo {
+  version: string;
+  /** Release page with the installers. */
+  url: string;
+}
+
 export interface PairingOffer {
   /** App link, `brainwashed://pair?...`. */
   url: string;

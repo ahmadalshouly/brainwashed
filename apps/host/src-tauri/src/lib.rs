@@ -14,6 +14,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let version = app.package_info().version.to_string();
@@ -95,6 +96,10 @@ pub fn run() {
             commands::delete_skill,
             commands::set_skill_enabled,
             commands::chat,
+            commands::check_for_update,
+            commands::update_checks_enabled,
+            commands::set_update_checks,
+            commands::open_release_page,
             commands::phone_status,
             commands::set_phone_access,
             commands::set_relay_url,

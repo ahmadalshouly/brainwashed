@@ -4,7 +4,11 @@ Turn your laptop into a private AI server, and talk to it from your phone or any
 
 BrainWashed runs open source language models on your own computer (macOS, Windows, Linux), lets you teach it new abilities by dropping in a markdown **skill** file, and serves a web chat so you can use it from your phone or any other device in a browser. Optional iOS/Android apps connect to the same host. Your conversations never leave hardware you own.
 
-> **Status:** early development (Phase 0: foundations). Nothing is usable yet. See the [architecture and roadmap](docs/architecture.md).
+> **Status:** pre-release. The desktop host, skills, the web chat, pairing other devices and access away from home through a relay all work; installers are built for every release but not yet signed. See [install.md](docs/install.md) to try it, and the [architecture and roadmap](docs/architecture.md) for what's next.
+
+## Install
+
+Download BrainWashed for macOS, Windows or Linux from the [releases page](https://github.com/ahmadalshouly/brainwashed/releases). [docs/install.md](docs/install.md) explains which file to pick and how to get past the warning for unsigned installers.
 
 ## Repository layout
 
@@ -64,7 +68,15 @@ No app is required: the host serves a web chat that works in any browser on your
 
 The optional BrainWashed iOS and Android apps, sold separately, scan the same QR code and add more on top. Anyone can build their own client: the protocol is documented and versioned in [docs/client-protocol.md](docs/client-protocol.md), and `@brainwashed/api` implements it in TypeScript.
 
-The device and computer must be on the same network for now. Messages are end-to-end encrypted with keys exchanged through the QR code.
+Messages are end-to-end encrypted with keys exchanged through the QR code.
+
+### Away from home
+
+Under **Devices > Away from home**, point the computer at a relay. Paired apps then keep working on any network, with no router setup, and the relay only ever sees encrypted traffic. You can run your own relay with one Docker command; see [docs/relay.md](docs/relay.md). The web chat stays on your home network.
+
+## Releasing
+
+Maintainers: see [docs/releasing.md](docs/releasing.md).
 
 ## License
 
