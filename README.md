@@ -1,8 +1,8 @@
 # BrainWashed
 
-Turn your laptop into a private AI server, and talk to it from your phone.
+Turn your laptop into a private AI server, and talk to it from your phone or any browser.
 
-BrainWashed runs open source language models on your own computer (macOS, Windows, Linux), lets you teach it new abilities by dropping in a markdown **skill** file, and pairs with an iOS/Android app so you can use your home AI from anywhere. Your conversations never leave hardware you own.
+BrainWashed runs open source language models on your own computer (macOS, Windows, Linux), lets you teach it new abilities by dropping in a markdown **skill** file, and serves a web chat so you can use it from your phone or any other device in a browser. Optional iOS/Android apps connect to the same host. Your conversations never leave hardware you own.
 
 > **Status:** early development (Phase 0: foundations). Nothing is usable yet. See the [architecture and roadmap](docs/architecture.md).
 
@@ -11,8 +11,9 @@ BrainWashed runs open source language models on your own computer (macOS, Window
 | Path | What it is |
 |---|---|
 | `apps/host` | Desktop host app (Tauri 2: Rust core + React UI) |
+| `apps/web` | Web chat the host serves to browsers on your network |
 | `apps/mobile` | Phone app (React Native + Expo) |
-| `packages/api` | TypeScript types and client shared by the host UI and phone app |
+| `packages/api` | TypeScript types and client for the host's client protocol |
 | `crates/skills` | Parser and loader for `SKILL.md` files |
 | `skills-examples` | Example skills |
 | `model` | Fine-tuning scripts and evals for the BrainWashed model |
@@ -25,6 +26,7 @@ Prerequisites: Node 20+, pnpm 10, Rust (stable), and the [Tauri system dependenc
 ```sh
 pnpm install
 pnpm host:dev        # run the desktop host
+pnpm web:build       # build the web chat the host serves (rebuild the host after)
 pnpm mobile:start    # run the phone app in Expo Go or a simulator
 pnpm typecheck && pnpm test && cargo test --workspace
 ```
@@ -52,15 +54,17 @@ How it works:
 
 See [`skills-examples`](skills-examples) for the skills that ship with the app.
 
-## Using it from your phone
+## Using it from your phone or another computer
 
-1. On the computer, open **Phones**, turn on **Allow phones on this network**, then click **Pair a phone**.
-2. In the BrainWashed phone app, tap **Pair a computer** and scan the QR code.
-3. Chat, switch models and turn skills on or off from the phone.
+No app is required: the host serves a web chat that works in any browser on your network.
 
-Phone and computer must be on the same network for now. Traffic is end-to-end encrypted with keys exchanged through the QR code; see [docs/phone-protocol.md](docs/phone-protocol.md).
+1. On the computer, open **Devices**, turn on **Allow phones and browsers on this network**, then click **Pair a device**.
+2. Scan the QR code with your phone's camera. It opens the chat in the browser and pairs it. On another computer, open the link shown under the code.
+3. Chat and switch models from that browser. It stays paired until you remove it under **Devices**.
 
-To try the phone app without a phone, run `pnpm --filter @brainwashed/mobile web` and paste the pairing link instead of scanning it.
+The optional BrainWashed phone apps scan the same QR code and add more on top. Anyone can build their own client: the protocol is documented and versioned in [docs/client-protocol.md](docs/client-protocol.md), and `@brainwashed/api` implements it in TypeScript.
+
+The device and computer must be on the same network for now. Messages are end-to-end encrypted with keys exchanged through the QR code.
 
 ## License
 

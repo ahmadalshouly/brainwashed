@@ -31,6 +31,17 @@ describe("parsePairingUrl", () => {
     });
   });
 
+  it("reads the web chat link the QR code shows", () => {
+    const info = parsePairingUrl("http://192.168.1.5:47860/#pair?v=1&k=abc&t=tok&a=192.168.1.5&p=47860&n=Mac");
+    expect(info).toMatchObject({ hostKey: "abc", token: "tok", addresses: ["192.168.1.5"], port: 47860 });
+    // The web chat pairs with whatever served it, even with no LAN address.
+    const here = parsePairingUrl("http://localhost:8080/#pair?v=1&k=abc&t=tok&a=&p=47860", {
+      address: "localhost",
+      port: 8080,
+    });
+    expect(here).toMatchObject({ addresses: ["localhost"], port: 8080 });
+  });
+
   it("explains a host with no network address", () => {
     expect(() => parsePairingUrl("brainwashed://pair?v=1&k=a&t=b&a=&p=1")).toThrow(/local network/);
   });

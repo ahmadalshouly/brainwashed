@@ -13,9 +13,20 @@ export interface PairingInfo {
   hostName: string;
 }
 
-/** Parses the `brainwashed://pair?...` link shown as a QR code on the computer. */
-export function parsePairingUrl(url: string): PairingInfo {
-  const match = /^brainwashed:\/\/pair\?(.*)$/.exec(url.trim());
+const PAIRING_LINK = /^(?:brainwashed:\/\/pair|https?:\/\/[^#]*#pair)\?(.*)$/;
+
+/** Whether a scanned QR code is a BrainWashed pairing link. */
+export function isPairingUrl(url: string): boolean {
+  return PAIRING_LINK.test(url.trim());
+}
+
+/**
+ * Parses the pairing link shown as a QR code on the computer: either the app
+ * link `brainwashed://pair?...` or the web chat link `http://<host>/#pair?...`.
+ * `at` replaces the advertised addresses, for the web chat.
+ */
+export function parsePairingUrl(url: string, at?: { address: string; port: number }): PairingInfo {
+  const match = PAIRING_LINK.exec(url.trim());
   if (!match) throw new Error("This isn't a BrainWashed pairing code.");
   const params = new Map<string, string>();
   for (const kv of match[1].split("&")) {
@@ -28,7 +39,8 @@ export function parsePairingUrl(url: string): PairingInfo {
     return v;
   };
   if (get("v") !== "1") throw new Error("This pairing code needs a newer version of the app.");
-  const addresses = (params.get("a") ?? "").split(",").filter(Boolean);
+  // The web chat can only reach the computer that served it, wherever that is.
+  const addresses = at ? [at.address] : (params.get("a") ?? "").split(",").filter(Boolean);
   if (addresses.length === 0) {
     throw new Error("The computer isn't on a local network. Connect it to Wi-Fi, then show a new code.");
   }
@@ -36,7 +48,7 @@ export function parsePairingUrl(url: string): PairingInfo {
     hostKey: get("k"),
     token: get("t"),
     addresses,
-    port: Number(get("p")),
+    port: at ? at.port : Number(get("p")),
     hostName: params.get("n") ?? "Computer",
   };
 }

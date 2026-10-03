@@ -105,7 +105,10 @@ export interface PhoneAccessStatus {
 }
 
 export interface PairingOffer {
+  /** App link, `brainwashed://pair?...`. */
   url: string;
+  /** The same details as a link to the host's web chat. This is what the QR code shows. */
+  webUrl: string;
   expiresAt: number;
   addresses: string[];
   port: number;

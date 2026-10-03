@@ -28,8 +28,13 @@ const MAX_CLOCK_SKEW_MS: u64 = 5 * 60 * 1000;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PairingOffer {
-    /// What the QR code encodes.
+    /// App link: `brainwashed://pair?…`.
     pub url: String,
+    /// The same pairing details as a link to the web chat this gateway
+    /// serves, carried in the URL fragment so they never reach the network.
+    /// Phone cameras open it in the browser, and the app accepts it too, so
+    /// it is what the QR code encodes.
+    pub web_url: String,
     pub expires_at: u64,
     pub addresses: Vec<IpAddr>,
     pub port: u16,
@@ -156,13 +161,18 @@ impl Gateway {
             .map(|a| a.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        let url = format!(
-            "brainwashed://pair?v={PROTOCOL_VERSION}&k={}&t={token}&a={addr_list}&p={port}&n={}",
+        let query = format!(
+            "v={PROTOCOL_VERSION}&k={}&t={token}&a={addr_list}&p={port}&n={}",
             self.inner.keys.public_key_b64url(),
             percent_encode(&self.inner.engine.host_name()),
         );
+        let web_host = addresses
+            .first()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| "localhost".into());
         Ok(PairingOffer {
-            url,
+            url: format!("brainwashed://pair?{query}"),
+            web_url: format!("http://{web_host}:{port}/#pair?{query}"),
             expires_at,
             addresses,
             port,
@@ -185,6 +195,7 @@ impl Gateway {
             .route("/hello", get(hello))
             .route("/pair", post(pair))
             .route("/rpc", post(rpc))
+            .fallback(get(crate::web::serve))
             .with_state(self.clone())
     }
 

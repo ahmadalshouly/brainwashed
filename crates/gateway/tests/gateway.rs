@@ -231,3 +231,36 @@ async fn offers_need_a_running_gateway_and_stop_works() {
         .await;
     assert!(refused.is_err());
 }
+
+#[tokio::test]
+async fn serves_the_web_chat_with_a_browser_pairing_link() {
+    let (gw, url, port, _dir) = setup().await;
+    let offer = gw.create_pairing_offer().unwrap();
+    // Same details as the app link, in the fragment so they stay in the browser.
+    let (base, fragment) = offer.web_url.split_once("#pair?").unwrap();
+    assert!(base.starts_with("http://") && base.ends_with(&format!(":{port}/")));
+    assert_eq!(query(&format!("x?{fragment}"), "k"), query(&url, "k"));
+
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    for path in ["/", "/chat"] {
+        let res = client
+            .get(format!("http://127.0.0.1:{port}{path}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200);
+        assert!(res.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html"));
+        let csp = res.headers()["content-security-policy"].to_str().unwrap();
+        assert!(csp.contains("connect-src 'self'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+    }
+    let missing = client
+        .get(format!("http://127.0.0.1:{port}/assets/nope.js"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), 404);
+}
