@@ -21,6 +21,9 @@ pub struct Settings {
     pub system_prompt: String,
     /// Skills the user switched off.
     pub disabled_skills: Vec<String>,
+    /// Let paired phones on the local network use this computer.
+    pub phone_access: bool,
+    pub phone_port: u16,
 }
 
 impl Default for Settings {
@@ -34,6 +37,8 @@ impl Default for Settings {
             active_model: None,
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             disabled_skills: Vec::new(),
+            phone_access: false,
+            phone_port: 47860,
         }
     }
 }

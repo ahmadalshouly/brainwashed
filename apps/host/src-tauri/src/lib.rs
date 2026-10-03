@@ -1,6 +1,7 @@
 mod commands;
 
 use brainwashed_core::{Engine, EngineConfig};
+use brainwashed_gateway::Gateway;
 use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -16,7 +17,27 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let version = app.package_info().version.to_string();
-            let engine = Engine::new(EngineConfig::new(data_dir, version))?;
+            let engine = Engine::new(EngineConfig::new(&data_dir, version))?;
+            let gateway = Gateway::new(engine.clone(), &data_dir)?;
+
+            let mut gateway_events = gateway.subscribe();
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                while let Ok(event) = gateway_events.recv().await {
+                    let _ = handle.emit("gateway", event);
+                }
+            });
+
+            if engine.settings().phone_access {
+                let gw = gateway.clone();
+                let port = engine.settings().phone_port;
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = gw.start(port).await {
+                        tracing::warn!("could not start phone access on port {port}: {e}");
+                    }
+                });
+            }
+            app.manage(gateway);
 
             // Forward engine events to the UI.
             let mut events = engine.subscribe();
@@ -71,6 +92,11 @@ pub fn run() {
             commands::delete_skill,
             commands::set_skill_enabled,
             commands::chat,
+            commands::phone_status,
+            commands::set_phone_access,
+            commands::create_pairing_offer,
+            commands::paired_devices,
+            commands::remove_device,
         ])
         .build(tauri::generate_context!())
         .expect("error while building BrainWashed host");

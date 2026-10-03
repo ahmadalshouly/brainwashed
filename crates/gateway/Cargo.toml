@@ -1,0 +1,27 @@
+[package]
+name = "brainwashed-gateway"
+version = "0.0.0"
+description = "Lets paired phones talk to the BrainWashed engine over the local network."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum = "0.8"
+base64 = "0.22"
+brainwashed-core = { path = "../core" }
+crypto_box = { version = "0.9", features = ["std", "getrandom"] }
+futures-util = "0.3"
+if-addrs = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-stream = "0.1"
+tracing = "0.1"
+
+[dev-dependencies]
+base64 = "0.22"
+reqwest = { version = "0.13", features = ["json", "stream"] }
+tempfile = "3"

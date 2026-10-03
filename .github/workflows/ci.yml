@@ -68,7 +68,20 @@ jobs:
         env:
           BRAINWASHED_TEST_LLAMA_SERVER: ${{ runner.temp }}/llama.cpp/build/bin/llama-server
           BRAINWASHED_TEST_MODEL: ${{ runner.temp }}/tiny.gguf
-        run: cargo test -p brainwashed-runtime -p brainwashed-core
+        run: cargo test -p brainwashed-runtime -p brainwashed-core -p brainwashed-gateway
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Phone client against the real gateway
+        env:
+          BRAINWASHED_TEST_LLAMA_SERVER: ${{ runner.temp }}/llama.cpp/build/bin/llama-server
+          BRAINWASHED_TEST_MODEL: ${{ runner.temp }}/tiny.gguf
+        run: |
+          cargo build -p brainwashed-gateway --example devserver
+          BRAINWASHED_DEVSERVER="$PWD/target/debug/examples/devserver" pnpm --filter @brainwashed/api test
 
   host:
     name: Host app (${{ matrix.platform }})
@@ -120,6 +133,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Bundle for iOS and Android
+      - name: Bundle for iOS, Android and web
         working-directory: apps/mobile
-        run: npx expo export --platform ios --platform android --output-dir dist
+        run: npx expo export --platform ios --platform android --platform web --output-dir dist
