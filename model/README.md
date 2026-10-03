@@ -1,6 +1,6 @@
 # BrainWashed model
 
-Everything needed to train the default BrainWashed model on a free Kaggle GPU: a small Apache-2.0 model fine-tuned to follow `SKILL.md` skills and make clean tool calls, shipped as GGUF for the host's llama.cpp runtime.
+Everything needed to train the default BrainWashed model on a free Kaggle GPU: a small, multimodal, Apache-2.0 model fine-tuned to follow `SKILL.md` skills and make clean tool calls, shipped as GGUF for the host's llama.cpp runtime.
 
 Skills are still injected into the prompt at runtime (see [docs/architecture.md](../docs/architecture.md#4-skills-teach-it-with-a-markdown-file)). Training does not bake any skill in. It teaches the model the *habit* of reading whatever skill the host routes to it and obeying it, ignoring skills that don't fit, and calling tools only when needed, with valid arguments.
 
@@ -29,14 +29,17 @@ Skills are still injected into the prompt at runtime (see [docs/architecture.md]
    - **Add Input → Your Work →** your `01_generate_data` notebook.
    - Optional: add a Hugging Face write token as the secret `HF_TOKEN` and set `HF_REPO` to publish the GGUF files.
    - **Save Version → Save & Run All (Commit)**.
-5. **Read the result.** The last cells print a table comparing the base model and your fine-tune on the held-out eval. Ship it only if the fine-tune wins. The GGUF files are in the notebook's Output tab under `gguf/` (`*-Q4_K_M.gguf` is the one for 8 GB laptops).
-6. **Try it.** `llama-server -m brainwashed-1.7b-Q4_K_M.gguf --jinja`, or load it in the BrainWashed host.
+5. **Read the result.** The last cells print a table comparing the base model and your fine-tune on the held-out eval, then show the model a picture to confirm it still sees images. Ship it only if the fine-tune wins. The GGUF files are in the notebook's Output tab under `gguf/`: `*-Q4_K_M.gguf` is the one for 8 GB laptops, and `mmproj-*.gguf` is the vision part.
+6. **Try it.** `llama-server -m brainwashed-2b-Q4_K_M.gguf --mmproj mmproj-brainwashed-2b-f16.gguf --jinja`, or load it in the BrainWashed host.
 
 Kaggle's free tier gives about 30 GPU hours a week and 12 hours per session. A full run of both notebooks with the defaults should fit in one week's quota.
 
 ## Choices made
 
-- **Base model: `Qwen/Qwen3-1.7B`** (Apache-2.0, already in the host's catalog). llama.cpp parses its tool calls natively, it trains fast on one T4, and its Q4_K_M file is about 1.1 GB. For a stronger model that still fits an 8 GB laptop, set `BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"` and `LOAD_IN_4BIT = True` in the training notebook. Gemma and Llama bases also work technically, but their licenses add terms that downstream users must accept.
+- **Base model: `Qwen/Qwen3.5-2B`** (Apache-2.0). It is small, reads images and video as well as text, calls tools natively, and runs in llama.cpp with a separate vision file (`--mmproj`). It answers without a thinking phase by default, which suits slow laptops. One line in the training notebook switches to:
+  - `Qwen/Qwen3.5-4B`: the same model family, smarter, still fits an 8 GB laptop at Q4 (set `LOAD_IN_4BIT = True`).
+  - `google/gemma-4-E2B-it`: Apache-2.0 too, and it also understands audio (voice notes up to 30 seconds), at the cost of a bigger file (5.1B parameters stored, 2.3B active).
+- **Only the language part is trained.** The vision and audio encoders stay frozen, so image understanding survives fine-tuning. The training data is text only; image-and-tool examples can be added later once the app sends images.
 - **Teacher: an open-weight Qwen3 model.** Its outputs can be used for training. Most closed-model APIs forbid using their outputs to train other models, so check the terms before swapping in a hosted teacher.
 - **LoRA (r=16) on all attention and MLP projections**, 2 epochs, learning rate 2e-4, loss only on the assistant's replies.
 - **Plain Hugging Face `transformers` + `peft`** rather than a faster wrapper, because it has the fewest moving parts to break on Kaggle. The notebook pins the library versions it was tested with.
@@ -79,7 +82,7 @@ python model/data/generate.py --base-url http://127.0.0.1:8080/v1 --model teache
 
 ## Keeping it in sync with the host
 
-If the host's system prompt or skill layout changes (`crates/core/src/settings.rs`, `crates/core/src/skills.rs`), update `bwmodel/prompt.py` and regenerate the data, or the model learns a format it never sees in the app. The host does not send tools to the model yet; the tool runner is a later phase. Training on tool calls now means the model is ready when it lands, and llama-server already returns them as OpenAI `tool_calls`.
+If the host's system prompt or skill layout changes (`crates/core/src/settings.rs`, `crates/core/src/skills.rs`), update `bwmodel/prompt.py` and regenerate the data, or the model learns a format it never sees in the app. The host does not send tools or images to the model yet: the tool runner is a later phase, and image input needs the runtime to pass `--mmproj` to llama-server and the apps to attach photos. Training on tool calls now means the model is ready when it lands, and llama-server already returns them as OpenAI `tool_calls`.
 
 ## Tests
 
