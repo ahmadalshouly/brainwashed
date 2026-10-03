@@ -5,5 +5,5 @@ members = ["apps/host/src-tauri", "crates/*"]
 [workspace.package]
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/ahmadshouly/brainwashed"
+repository = "https://github.com/ahmadalshouly/brainwashed"
 rust-version = "1.77"
