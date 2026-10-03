@@ -17,6 +17,5 @@ CI runs the same checks and builds the desktop host on macOS, Windows and Linux.
 ## Conventions
 
 - Shared wire types live in `packages/api`. When you change one, update the matching Rust struct (they are marked with a comment pointing at each other).
-- Add phone dependencies with `npx expo install <pkg>` from `apps/mobile` so versions match the Expo SDK.
 - Keep pull requests focused on one change.
 - By contributing you agree your work is licensed under Apache-2.0.
