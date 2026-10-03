@@ -12,7 +12,6 @@ BrainWashed runs open source language models on your own computer (macOS, Window
 |---|---|
 | `apps/host` | Desktop host app (Tauri 2: Rust core + React UI) |
 | `apps/web` | Web chat the host serves to browsers on your network |
-| `apps/mobile` | Phone app (React Native + Expo) |
 | `packages/api` | TypeScript types and client for the host's client protocol |
 | `crates/skills` | Parser and loader for `SKILL.md` files |
 | `crates/gateway` | The host's encrypted API for paired devices, and its relay connection |
@@ -29,7 +28,6 @@ Prerequisites: Node 20+, pnpm 10, Rust (stable), and the [Tauri system dependenc
 pnpm install
 pnpm host:dev        # run the desktop host
 pnpm web:build       # build the web chat the host serves (rebuild the host after)
-pnpm mobile:start    # run the phone app in Expo Go or a simulator
 pnpm typecheck && pnpm test && cargo test --workspace
 ```
 
@@ -64,7 +62,7 @@ No app is required: the host serves a web chat that works in any browser on your
 2. Scan the QR code with your phone's camera. It opens the chat in the browser and pairs it. On another computer, open the link shown under the code.
 3. Chat and switch models from that browser. It stays paired until you remove it under **Devices**.
 
-The optional BrainWashed phone apps scan the same QR code and add more on top. Anyone can build their own client: the protocol is documented and versioned in [docs/client-protocol.md](docs/client-protocol.md), and `@brainwashed/api` implements it in TypeScript.
+The optional BrainWashed iOS and Android apps, sold separately, scan the same QR code and add more on top. Anyone can build their own client: the protocol is documented and versioned in [docs/client-protocol.md](docs/client-protocol.md), and `@brainwashed/api` implements it in TypeScript.
 
 The device and computer must be on the same network for now. Messages are end-to-end encrypted with keys exchanged through the QR code.
 

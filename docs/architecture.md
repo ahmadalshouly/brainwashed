@@ -10,7 +10,8 @@ _Draft 1, 2026-10-03. Turns a personal laptop into a private AI host, with a pho
 | **Model runtime** | Runs any open GGUF model on CPU or GPU | llama.cpp `llama-server`, bundled as a sidecar |
 | **Skills engine** | Loads user-written `.md` skills into the model at inference time | Rust module in the host, small embedding model for routing |
 | **Connectivity** | Phone reaches the laptop at home or away, end-to-end encrypted | LAN first (QR pairing), then a self-hostable relay that forwards end-to-end encrypted traffic |
-| **Mobile app** (iOS, Android) | Chat, pick model, manage skills, pair with host | React Native + Expo (shares TS types and API client with the host UI) |
+| **Web chat** | Chat from any browser on the network, paired by QR | React app served by the host (`apps/web`) |
+| **Mobile app** (iOS, Android) | Optional paid client: chat, pick model, manage skills | React Native + Expo, closed source in a separate repo; uses only the public [client protocol](client-protocol.md) |
 | **BrainWashed model** | Ahmad's fine-tuned 2-3B model, the default download | QLoRA fine-tune of an Apache-2.0 base, shipped as GGUF Q4_K_M (~2 GB) |
 
 Why these choices:
@@ -95,9 +96,11 @@ When the user asks for a meal plan:
 
 ## 7. Mobile app
 
+The iOS and Android apps are closed source and sold separately as one-time purchases; they live in a private repository. Everything they do goes through the public [client protocol](client-protocol.md), and the free web chat served by the host covers the same features.
+
 - Screens: host list and pairing, chat (streaming, markdown, copy), model picker, skills list/editor, settings.
 - Local conversation cache in SQLite; host is the source of truth.
-- Shared `@brainwashed/api` TypeScript package used by the phone and the host UI.
+- Shared `@brainwashed/api` TypeScript package (Apache-2.0) used by the web chat and the apps.
 - Later: voice input (on-device speech-to-text), share-sheet "ask BrainWashed", optional tiny on-device model for offline use.
 
 ## 8. Repository layout (one monorepo)
@@ -105,10 +108,11 @@ When the user asks for a meal plan:
 ```
 brainwashed/
   apps/host/          Tauri app (src-tauri = Rust core, src = React UI)
-  apps/mobile/        Expo app
+  apps/web/           Web chat served by the host
   packages/api/       Shared TS types + client
   crates/skills/      Skill parser, router
-  crates/gateway/     Pairing, auth, iroh transport
+  crates/gateway/     Pairing, auth, relay client
+  crates/relay/       Relay server for access away from home
   model/              Fine-tune scripts, data gen, evals
   skills-examples/    Starter skills
   docs/

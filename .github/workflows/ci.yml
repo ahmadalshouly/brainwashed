@@ -135,19 +135,3 @@ jobs:
             target/release/bundle/msi/*.msi
             target/release/bundle/nsis/*.exe
           if-no-files-found: error
-
-  mobile:
-    name: Mobile app (JS bundle)
-    needs: js
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Bundle for iOS, Android and web
-        working-directory: apps/mobile
-        run: npx expo export --platform ios --platform android --platform web --output-dir dist
