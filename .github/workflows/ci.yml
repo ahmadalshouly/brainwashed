@@ -143,6 +143,7 @@ jobs:
         shell: powershell
         env:
           BRAINWASHED_NO_START: "1"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           Get-Content -Raw install.ps1 | Invoke-Expression
           & "$env:LOCALAPPDATA\Programs\BrainWashed\brainwashed.exe" --version
