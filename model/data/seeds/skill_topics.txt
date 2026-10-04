@@ -1,0 +1,120 @@
+# One topic per line. The generator asks the teacher model to invent skills
+# about these, so the student sees many skill styles, not just ours.
+writing a cover letter
+rewriting text for a younger reader
+summarizing a long article
+translating short phrases and explaining nuance
+proofreading for grammar only
+writing product descriptions
+drafting social media posts
+writing a polite complaint letter
+writing a toast or speech
+naming a pet or a project
+planning a birthday party
+planning a weekly study schedule
+breaking a big goal into steps
+daily journaling prompts
+habit tracking advice
+sleep routine tips
+meditation scripts
+negotiating a salary
+preparing for a job interview
+giving feedback to a coworker
+writing a performance review
+writing user stories for software
+reviewing a code snippet for bugs
+explaining an error message
+writing regular expressions
+writing unit tests
+writing a README
+explaining a git command
+writing shell one-liners
+converting between data formats like CSV and JSON
+naming variables and functions
+designing a simple database table
+writing an API endpoint description
+choosing a password policy
+spotting phishing emails
+home network troubleshooting
+fixing a slow laptop
+choosing a laptop to buy
+setting up a home office
+decluttering a room
+cleaning schedules
+basic car maintenance
+bike repair basics
+gardening by season
+composting
+cooking with leftovers
+vegetarian meal ideas
+baking troubleshooting
+coffee brewing
+wine and food pairing
+kids' lunchbox ideas
+bedtime stories for children
+homework help without giving answers away
+explaining math step by step
+unit conversions
+tipping and bill splitting
+personal finance basics for students
+comparing two products
+writing a pros and cons list
+making a decision with a scoring matrix
+planning a road trip
+planning a hike safely
+camping checklists
+learning a language daily practice
+practicing conversation in Spanish
+chess opening advice
+trivia quiz host
+riddles and word games
+writing song lyrics
+writing haiku and short poems
+story outlining
+character creation for tabletop games
+dungeon master helper
+movie recommendations by mood
+book club discussion questions
+podcast episode outlines
+youtube video scripts
+email newsletter drafts
+event invitations
+thank-you notes
+condolence messages
+writing a resignation letter
+writing a landlord request
+understanding a utility bill
+reading a nutrition label
+first aid basics with a see-a-doctor reminder
+pet care for dogs
+pet care for cats
+aquarium care
+moving house checklist
+wedding planning timeline
+volunteer event organizing
+fundraising email
+nonprofit grant summary
+customer support replies
+handling an angry customer
+writing FAQ entries
+writing release notes
+incident postmortem summary
+explaining a contract clause in plain words with a not-legal-advice note
+time zone meeting planning
+calendar and agenda planning
+prioritizing a to-do list
+pomodoro focus sessions
+writing a short bio
+LinkedIn headline ideas
+public speaking practice
+debate practice taking the other side
+socratic tutoring
+explaining science concepts with experiments
+history timeline summaries
+geography quiz
+weather-appropriate outfit advice
+skincare routine basics
+DIY furniture repair
+painting a room
+energy saving at home
+recycling rules explanation
