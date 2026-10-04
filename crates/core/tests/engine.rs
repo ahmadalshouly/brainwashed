@@ -39,13 +39,13 @@ async fn fake_services(model: Vec<u8>, runtime_zip: Vec<u8>) -> String {
         )
         .route("/runtime.zip", get(move || async move { runtime_zip }));
     let base = serve(app).await;
-    let release = serde_json::json!({
+    let release = serde_json::json!([{
         "tag_name": "b1",
         "assets": [{"name": "llama-b1-bin-ubuntu-x64.zip", "browser_download_url": format!("{base}/runtime.zip"), "size": 0}]
-    });
-    let rel_app = Router::new().route("/latest", get(move || async move { Json(release) }));
+    }]);
+    let rel_app = Router::new().route("/releases", get(move || async move { Json(release) }));
     let rel_base = serve(rel_app).await;
-    format!("{base}|{rel_base}/latest")
+    format!("{base}|{rel_base}/releases")
 }
 
 fn engine(dir: &std::path::Path, services: &str) -> Engine {
