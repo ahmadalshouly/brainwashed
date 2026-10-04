@@ -2,7 +2,7 @@
 
 use brainwashed_core::{
     CatalogItem, ChatEvent, ChatMessage, Engine, EngineState, Hardware, HostInfo, InstalledModel,
-    SamplingOptions, Settings, SkillList,
+    SamplingOptions, Settings, SkillList, UpdateInfo,
 };
 use brainwashed_gateway::{Device, Gateway, GatewayStatus, PairingOffer};
 use std::path::PathBuf;
@@ -17,6 +17,32 @@ fn err(e: impl std::fmt::Display) -> String {
 #[tauri::command]
 pub fn host_info(engine: State<Engine>) -> HostInfo {
     engine.info()
+}
+
+#[tauri::command]
+pub async fn check_for_update(engine: State<'_, Engine>) -> CmdResult<Option<UpdateInfo>> {
+    Ok(engine.check_for_update().await)
+}
+
+#[tauri::command]
+pub fn update_checks_enabled(engine: State<Engine>) -> bool {
+    engine.settings().check_for_updates
+}
+
+#[tauri::command]
+pub fn set_update_checks(engine: State<Engine>, enabled: bool) -> CmdResult<()> {
+    let mut settings = engine.settings();
+    settings.check_for_updates = enabled;
+    engine.update_settings(settings).map_err(err)
+}
+
+/// Opens a release page in the browser. Only this project's releases.
+#[tauri::command]
+pub fn open_release_page(url: String) -> CmdResult<()> {
+    if !url.starts_with("https://github.com/ahmadalshouly/brainwashed/releases") {
+        return Err("not a BrainWashed release page".into());
+    }
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(err)
 }
 
 #[tauri::command]

@@ -197,6 +197,27 @@ impl Engine {
         }
     }
 
+    /// A newer release than this one, if GitHub lists one. Returns None when
+    /// the user turned update checks off or GitHub can't be reached.
+    pub async fn check_for_update(&self) -> Option<crate::UpdateInfo> {
+        if !self.settings().check_for_updates {
+            return None;
+        }
+        let res = self
+            .inner
+            .client
+            .get(crate::updates::RELEASES_URL)
+            .header("Accept", "application/vnd.github+json")
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?;
+        let body = res.text().await.ok()?;
+        crate::updates::newer_release(&self.inner.config.app_version, &body)
+    }
+
     pub fn host_name(&self) -> String {
         self.settings()
             .host_name

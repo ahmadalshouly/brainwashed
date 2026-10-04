@@ -13,6 +13,7 @@ import type {
   PairedDevice,
   PairingOffer,
   PhoneAccessStatus,
+  UpdateInfo,
   SkillList,
 } from "@brainwashed/api";
 
@@ -34,6 +35,10 @@ export const engine = {
   deleteSkill: (name: string) => invoke<void>("delete_skill", { name }),
   setSkillEnabled: (name: string, enabled: boolean) =>
     invoke<void>("set_skill_enabled", { name, enabled }),
+  checkForUpdate: () => invoke<UpdateInfo | null>("check_for_update"),
+  updateChecksEnabled: () => invoke<boolean>("update_checks_enabled"),
+  setUpdateChecks: (enabled: boolean) => invoke<void>("set_update_checks", { enabled }),
+  openReleasePage: (url: string) => invoke<void>("open_release_page", { url }),
   phoneStatus: () => invoke<PhoneAccessStatus>("phone_status"),
   setPhoneAccess: (enabled: boolean) => invoke<PhoneAccessStatus>("set_phone_access", { enabled }),
   setRelayUrl: (url: string | null) => invoke<PhoneAccessStatus>("set_relay_url", { url }),

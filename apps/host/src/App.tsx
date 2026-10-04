@@ -4,6 +4,7 @@ import { ModelsView } from "./views/ModelsView";
 import { SkillsView } from "./views/SkillsView";
 import { PhonesView } from "./views/PhonesView";
 import { StatusBar } from "./views/StatusBar";
+import { About } from "./views/About";
 import { useEngineState } from "./engine";
 
 type Tab = "chat" | "models" | "skills" | "phones";
@@ -30,6 +31,7 @@ export function App() {
         </button>
         <div className="spacer" />
         <StatusBar state={state} />
+        <About />
       </nav>
       <main className="content">
         {tab === "chat" && <ChatView state={state} onPickModel={() => setTab("models")} />}

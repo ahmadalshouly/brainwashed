@@ -5,6 +5,7 @@ mod engine;
 mod settings;
 mod skills;
 mod store;
+mod updates;
 
 pub use brainwashed_runtime as runtime;
 pub use brainwashed_runtime::chat::{Delta, SamplingOptions};
@@ -14,6 +15,7 @@ pub use engine::{CatalogItem, Engine, EngineConfig, EngineState, Event, HostInfo
 pub use settings::Settings;
 pub use skills::{ChatEvent, SkillInfo, SkillList, MAX_SKILL_CHARS};
 pub use store::InstalledModel;
+pub use updates::UpdateInfo;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
