@@ -8,8 +8,8 @@ Skills are still injected into the prompt at runtime (see [docs/architecture.md]
 
 | Path | What it is |
 |---|---|
-| `notebooks/01_generate_data.ipynb` | Kaggle notebook: runs a teacher model and writes the training data |
-| `notebooks/02_train.ipynb` | Kaggle notebook: LoRA fine-tune, merge, GGUF export, eval, optional Hugging Face upload |
+| `notebooks/01_generate_data.ipynb` | Kaggle notebook: runs a teacher model, writes the training data, publishes it as a Hugging Face dataset |
+| `notebooks/02_train.ipynb` | Kaggle notebook: LoRA fine-tune, merge, GGUF export, eval, Hugging Face publishing |
 | `data/generate.py` | The data generator (works with any OpenAI-compatible teacher) |
 | `data/seeds/` | Seed skills, tool definitions and skill topics the generator starts from |
 | `eval/` | Held-out skills, tools and 40 rule-checked test cases, plus `run_eval.py` |
@@ -27,7 +27,7 @@ Skills are still injected into the prompt at runtime (see [docs/architecture.md]
 4. **Train** with `02_train`:
    - GPU T4 x2, Internet On.
    - **Add Input → Your Work →** your `01_generate_data` notebook.
-   - Optional: add a Hugging Face write token as the secret `HF_TOKEN` and set `HF_REPO` to publish the GGUF files.
+   - To publish automatically: create a **write** token at huggingface.co → Settings → Access Tokens, add it in Kaggle under Add-ons → Secrets as `HF_TOKEN`, and attach it to both notebooks. Notebook 1 then uploads the data to `<you>/brainwashed-training-data`. Notebook 2 uploads `<you>/brainwashed-2b-GGUF` and the full weights to `<you>/brainwashed-2b`, each with a model card and the eval table, but only if the fine-tune beats the base model (`PUBLISH_ONLY_IF_BETTER`). Never paste the token into a notebook cell or a chat.
    - **Save Version → Save & Run All (Commit)**.
 5. **Read the result.** The last cells print a table comparing the base model and your fine-tune on the held-out eval, then show the model a picture to confirm it still sees images. Ship it only if the fine-tune wins. The GGUF files are in the notebook's Output tab under `gguf/`: `*-Q4_K_M.gguf` is the one for 8 GB laptops, and `mmproj-*.gguf` is the vision part.
 6. **Try it.** `llama-server -m brainwashed-2b-Q4_K_M.gguf --mmproj mmproj-brainwashed-2b-f16.gguf --jinja`, or load it in the BrainWashed host.
