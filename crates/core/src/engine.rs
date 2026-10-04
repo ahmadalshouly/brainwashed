@@ -31,7 +31,7 @@ impl EngineConfig {
         EngineConfig {
             data_dir: data_dir.into(),
             app_version: app_version.into(),
-            github_release_url: release::LATEST_RELEASE_URL.to_string(),
+            github_release_url: release::RELEASES_URL.to_string(),
             hf_base: catalog::HF_BASE.to_string(),
             load_timeout: Duration::from_secs(300),
         }
@@ -406,8 +406,8 @@ impl Engine {
             total: None,
         });
         let cfg = &self.inner.config;
-        let rel = release::fetch_latest(&self.inner.client, &cfg.github_release_url).await?;
-        let asset = release::select_asset(&rel, hw, settings.backend)?;
+        let releases = release::fetch_releases(&self.inner.client, &cfg.github_release_url).await?;
+        let (rel, asset) = release::select_newest(&releases, hw, settings.backend)?;
         let archive = self.runtime_dir().join("downloads").join(&asset.name);
         let engine = self.clone();
         download::download(

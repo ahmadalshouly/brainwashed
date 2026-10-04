@@ -1,6 +1,6 @@
 [package]
 name = "brainwashed-relay"
-version = "0.1.0"
+version = "0.1.1"
 description = "Forwards encrypted traffic between BrainWashed hosts and their paired devices when they are on different networks."
 edition.workspace = true
 license.workspace = true
