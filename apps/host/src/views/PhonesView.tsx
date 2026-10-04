@@ -9,6 +9,7 @@ export function PhonesView() {
   const [offer, setOffer] = useState<{ offer: PairingOffer; qr: string } | null>(null);
   const [justPaired, setJustPaired] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [relayDraft, setRelayDraft] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     engine.phoneStatus().then(setStatus);
@@ -49,6 +50,21 @@ export function PhonesView() {
     if (!enabled) setOffer(null);
   };
 
+  // The relay's connection state changes on its own; keep it fresh while shown.
+  useEffect(() => {
+    if (!status?.relay) return;
+    const timer = setInterval(() => engine.phoneStatus().then(setStatus), 3000);
+    return () => clearInterval(timer);
+  }, [!!status?.relay]);
+
+  const saveRelay = async (url: string | null) => {
+    const s = await run(engine.setRelayUrl(url));
+    if (s) {
+      setStatus(s);
+      setRelayDraft(null);
+    }
+  };
+
   const showCode = async () => {
     setJustPaired(null);
     const o = await run(engine.createPairingOffer());
@@ -75,7 +91,7 @@ export function PhonesView() {
 
       {status?.running && (
         <section className="pairing">
-          {status.addresses.length === 0 ? (
+          {status.addresses.length === 0 && !status.relay ? (
             <div className="banner error">This computer isn't on a local network, so phones can't reach it.</div>
           ) : offer ? (
             <div className="qr">
@@ -90,7 +106,10 @@ export function PhonesView() {
                   <code className="link">{offer.offer.webUrl}</code>
                 </p>
                 <p className="muted">
-                  The device must be on the same Wi-Fi. This code works once and expires in 10 minutes.
+                  {status.relay
+                    ? "Pair while the device is on the same Wi-Fi. The BrainWashed app then keeps working away from home through the relay; the web chat works on this network only."
+                    : "The device must be on the same Wi-Fi."}{" "}
+                  This code works once and expires in 10 minutes.
                 </p>
                 <button onClick={() => setOffer(null)}>Cancel</button>
               </div>
@@ -105,6 +124,59 @@ export function PhonesView() {
           </p>
         </section>
       )}
+
+      <section>
+        <h3>Away from home</h3>
+        <p className="muted">
+          To use this computer from anywhere, it keeps a connection open to a relay server. Messages pass through the
+          relay still end-to-end encrypted, so it can't read them. Run your own relay (see docs/relay.md in the
+          BrainWashed repository) or use one you trust.
+        </p>
+        {status?.relay && relayDraft === null ? (
+          <div className="row">
+            <div>
+              <code>{status.relay.url}</code>
+              <div className="muted small">
+                {!status.running
+                  ? "Turn on device access to connect."
+                  : status.relay.connected
+                    ? "Connected. Paired apps can reach this computer from anywhere."
+                    : `Not connected${status.relay.error ? `: ${status.relay.error}` : ""}. Retrying.`}
+              </div>
+            </div>
+            <div className="actions">
+              <button onClick={() => setRelayDraft(status.relay!.url)}>Change</button>
+              <button onClick={() => saveRelay(null)}>Turn off</button>
+            </div>
+          </div>
+        ) : (
+          <form
+            className="row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              saveRelay(relayDraft?.trim() || null);
+            }}
+          >
+            <input
+              type="url"
+              placeholder="https://relay.example.org"
+              value={relayDraft ?? ""}
+              onChange={(e) => setRelayDraft(e.target.value)}
+            />
+            <button className="primary" type="submit" disabled={!relayDraft?.trim()}>
+              Save
+            </button>
+            {status?.relay && (
+              <button type="button" onClick={() => setRelayDraft(null)}>
+                Cancel
+              </button>
+            )}
+          </form>
+        )}
+        {status?.relay && (
+          <p className="muted small">Devices paired before you set the relay need to pair again to use it.</p>
+        )}
+      </section>
 
       <section>
         <h3>Paired devices</h3>

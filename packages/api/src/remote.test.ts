@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { parsePairingUrl, pairWithHost, RemoteHost, HostReplyError } from "./remote";
+import { parsePairingUrl, pairWithHost, RemoteHost, HostReplyError, type PairedHost } from "./remote";
 import { fromBase64, toBase64, utf8Decode, utf8Encode } from "./encoding";
 
 describe("encoding", () => {
@@ -42,6 +42,19 @@ describe("parsePairingUrl", () => {
     expect(here).toMatchObject({ addresses: ["localhost"], port: 8080 });
   });
 
+  it("reads the relay address", () => {
+    const info = parsePairingUrl("brainwashed://pair?v=1&k=abc_-&t=tok&a=&p=1&r=https%3A%2F%2Frelay.example.org%2F");
+    expect(info.relay).toBe("https://relay.example.org/h/abc_-");
+    expect(info.addresses).toEqual([]);
+    // The web chat stays on the network that served it.
+    const web = parsePairingUrl("http://10.0.0.2:1/#pair?v=1&k=abc&t=tok&a=&p=1&r=https%3A%2F%2Frelay.example.org", {
+      address: "10.0.0.2",
+      port: 1,
+    });
+    expect(web.relay).toBeUndefined();
+    expect(() => parsePairingUrl("brainwashed://pair?v=1&k=a&t=b&a=&p=1&r=javascript%3Aalert(1)")).toThrow(/relay/);
+  });
+
   it("explains a host with no network address", () => {
     expect(() => parsePairingUrl("brainwashed://pair?v=1&k=a&t=b&a=&p=1")).toThrow(/local network/);
   });
@@ -60,6 +73,7 @@ const devserver = process.env.BRAINWASHED_DEVSERVER;
 describe.skipIf(!devserver)("against the real gateway", () => {
   let child: ChildProcess;
   let url: string;
+  let paired: PairedHost;
 
   beforeAll(async () => {
     const dir = mkdtempSync(join(tmpdir(), "bw-gw-"));
@@ -85,6 +99,7 @@ describe.skipIf(!devserver)("against the real gateway", () => {
     // An unreachable address first, to exercise fallback.
     info.addresses = ["192.0.2.1", "127.0.0.1"]; // 192.0.2.1 is reserved and never answers
     const host = await pairWithHost(info, "Vitest phone");
+    paired = host;
     expect(host.lastAddress).toBe("127.0.0.1");
     expect(host.hostId).toHaveLength(16);
 
@@ -103,6 +118,21 @@ describe.skipIf(!devserver)("against the real gateway", () => {
       await expect(chat).resolves.toBeTypeOf("string");
       expect(events[0]).toBe("skills");
       expect(events.length).toBeGreaterThan(1);
+    } else {
+      await expect(chat).rejects.toThrow(/no model/);
+    }
+  }, 60_000);
+
+  it("falls back to the relay when the computer's addresses don't answer", async () => {
+    expect(paired.relay).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/h\/[\w-]+$/);
+    // As if away from home: the local address no longer answers.
+    const away = new RemoteHost({ ...paired, addresses: ["192.0.2.1"], lastAddress: undefined });
+    expect((await away.info()).version).toBeTruthy();
+    expect(away.host.lastAddress).toBe(paired.relay);
+
+    const chat = away.chat([{ role: "user", content: "Hi" }], () => {});
+    if (process.env.BRAINWASHED_TEST_MODEL) {
+      await expect(chat).resolves.toBeTypeOf("string");
     } else {
       await expect(chat).rejects.toThrow(/no model/);
     }

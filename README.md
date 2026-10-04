@@ -14,6 +14,8 @@ BrainWashed runs open source language models on your own computer (macOS, Window
 | `apps/web` | Web chat the host serves to browsers on your network |
 | `packages/api` | TypeScript types and client for the host's client protocol |
 | `crates/skills` | Parser and loader for `SKILL.md` files |
+| `crates/gateway` | The host's encrypted API for paired devices, and its relay connection |
+| `crates/relay` | Relay server for using BrainWashed away from home ([docs](docs/relay.md)) |
 | `skills-examples` | Example skills |
 | `model` | Fine-tuning scripts and evals for the BrainWashed model |
 | `docs` | Architecture and design notes |

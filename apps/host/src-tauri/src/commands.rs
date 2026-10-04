@@ -153,6 +153,21 @@ pub async fn set_phone_access(
     Ok(gateway.status())
 }
 
+/// Sets the relay for access away from home (None turns it off) and
+/// remembers it.
+#[tauri::command]
+pub fn set_relay_url(
+    engine: State<'_, Engine>,
+    gateway: State<'_, Gateway>,
+    url: Option<String>,
+) -> CmdResult<GatewayStatus> {
+    gateway.set_relay_url(url.as_deref()).map_err(err)?;
+    let mut settings = engine.settings();
+    settings.relay_url = gateway.status().relay.map(|r| r.url);
+    engine.update_settings(settings).map_err(err)?;
+    Ok(gateway.status())
+}
+
 #[tauri::command]
 pub fn create_pairing_offer(gateway: State<Gateway>) -> CmdResult<PairingOffer> {
     gateway.create_pairing_offer().map_err(err)

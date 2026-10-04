@@ -1,5 +1,7 @@
 //! Runs the engine and phone gateway without the desktop app, for testing
-//! phone clients. Prints one JSON line with a pairing link, then serves.
+//! phone clients. Also runs a relay on loopback and connects the gateway to
+//! it, as if the client were away from home. Prints one JSON line with a
+//! pairing link, then serves.
 //!
 //! ```sh
 //! cargo run -p brainwashed-gateway --example devserver -- /tmp/bw-data [port]
@@ -30,8 +32,16 @@ async fn main() {
         engine.load_model(&m.id).await.unwrap();
     }
 
+    let relay = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let relay_url = format!("http://{}", relay.local_addr().unwrap());
+    tokio::spawn(brainwashed_relay::serve(relay));
+
     let gateway = Gateway::new(engine.clone(), &data_dir).unwrap();
+    gateway.set_relay_url(Some(&relay_url)).unwrap();
     let addr = gateway.start(port).await.unwrap();
+    while !gateway.status().relay.is_some_and(|r| r.connected) {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     let offer = gateway.create_pairing_offer().unwrap();
     println!(
         "{}",

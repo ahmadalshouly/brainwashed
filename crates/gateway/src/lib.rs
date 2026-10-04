@@ -8,10 +8,12 @@
 
 pub mod crypto;
 pub mod devices;
+pub mod relay;
 mod server;
 mod web;
 
 pub use devices::Device;
+pub use relay::RelayStatus;
 pub use server::{Gateway, GatewayEvent, GatewayStatus, PairingOffer, DEFAULT_PORT};
 
 #[derive(Debug, thiserror::Error)]
