@@ -7,7 +7,8 @@ use std::time::Duration;
 const MODEL_BYTES: &[u8] = b"GGUF-not-really";
 const PROJECTOR_BYTES: &[u8] = b"GGUF-projector";
 
-/// Files the fake Hugging Face served, across tests in this file.
+/// `repo/file` for each file the fake Hugging Face served, across tests in
+/// this file (they run in parallel).
 static FETCHED: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<Vec<String>>>> =
     std::sync::OnceLock::new();
 
@@ -21,25 +22,34 @@ async fn serve(app: Router) -> String {
 /// A fake Hugging Face serving one repo, plus a fake GitHub release whose
 /// llama.cpp "build" is a zip made by the test.
 async fn fake_services(model: Vec<u8>, runtime_zip: Vec<u8>) -> String {
-    let tree = serde_json::json!([
-        {"type": "file", "path": "Tiny-Q4_K_M.gguf", "size": model.len()},
-        {"type": "file", "path": "Tiny-Q8_0.gguf", "size": 1},
-        {"type": "file", "path": "mmproj-Tiny-F16.gguf", "size": PROJECTOR_BYTES.len()}
-    ]);
+    let size = model.len();
     let fetched = FETCHED.get_or_init(Default::default).clone();
     let app = Router::new()
         .route(
             "/api/models/{owner}/{repo}/tree/main",
-            get(move || async move { Json(tree) }),
+            // Only `-VL-` repos come with a vision projector, so the real
+            // llama-server in the end-to-end test isn't handed a fake one.
+            get(
+                move |UrlPath((_, repo)): UrlPath<(String, String)>| async move {
+                    let mut tree = vec![
+                        serde_json::json!({"type": "file", "path": "Tiny-Q4_K_M.gguf", "size": size}),
+                        serde_json::json!({"type": "file", "path": "Tiny-Q8_0.gguf", "size": 1}),
+                    ];
+                    if repo.contains("-VL-") {
+                        tree.push(serde_json::json!({"type": "file", "path": "mmproj-Tiny-F16.gguf", "size": PROJECTOR_BYTES.len()}));
+                    }
+                    Json(tree)
+                },
+            ),
         )
         .route(
             "/{owner}/{repo}/resolve/main/{file}",
             get(
-                move |UrlPath((_, _, file)): UrlPath<(String, String, String)>| {
+                move |UrlPath((_, repo, file)): UrlPath<(String, String, String)>| {
                     let model = model.clone();
                     let fetched = fetched.clone();
                     async move {
-                        fetched.lock().unwrap().push(file.clone());
+                        fetched.lock().unwrap().push(format!("{repo}/{file}"));
                         match file.as_str() {
                             "Tiny-Q4_K_M.gguf" => model,
                             "mmproj-Tiny-F16.gguf" => PROJECTOR_BYTES.to_vec(),
@@ -80,7 +90,10 @@ async fn downloads_lists_and_deletes_models() {
     let engine = engine(dir.path(), &services);
     let mut events = engine.subscribe();
 
-    let model = engine.download_model("acme/Tiny-GGUF", None).await.unwrap();
+    let model = engine
+        .download_model("acme/Tiny-VL-GGUF", None)
+        .await
+        .unwrap();
     assert_eq!(model.id, "Tiny-Q4_K_M");
     assert_eq!(std::fs::read(&model.path).unwrap(), MODEL_BYTES);
     // The vision projector comes along.
@@ -90,10 +103,26 @@ async fn downloads_lists_and_deletes_models() {
 
     // Downloading again fetches only what's missing.
     std::fs::remove_file(&mmproj).unwrap();
-    let before = FETCHED.get().unwrap().lock().unwrap().len();
-    engine.download_model("acme/Tiny-GGUF", None).await.unwrap();
-    let fetched = FETCHED.get().unwrap().lock().unwrap()[before..].to_vec();
-    assert_eq!(fetched, vec!["mmproj-Tiny-F16.gguf".to_string()]);
+    let mine = || {
+        FETCHED
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|f| f.starts_with("Tiny-VL-GGUF/"))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let before = mine().len();
+    engine
+        .download_model("acme/Tiny-VL-GGUF", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        mine()[before..],
+        ["Tiny-VL-GGUF/mmproj-Tiny-F16.gguf".to_string()]
+    );
 
     let mut saw_progress = false;
     while let Ok(ev) = events.try_recv() {
