@@ -41,6 +41,8 @@ pub struct Settings {
     pub cloudflared_path: Option<PathBuf>,
     /// Look on GitHub for newer releases at startup.
     pub check_for_updates: bool,
+    /// Community skill index to browse. None uses the BrainWashed registry.
+    pub skill_index: Option<String>,
 }
 
 /// Ways to reach the host from outside the local network with no server of
@@ -78,6 +80,7 @@ impl Default for Settings {
             public_url: None,
             cloudflared_path: None,
             check_for_updates: true,
+            skill_index: None,
         }
     }
 }

@@ -63,6 +63,18 @@ How it works:
 
 See [`skills-examples`](skills-examples) for the skills that ship with BrainWashed.
 
+### Community skills
+
+People share skills in the [community registry](https://github.com/ahmadalshouly/brainwashed-skills) ([browse them](https://ahmadalshouly.github.io/brainwashed-skills/)). Install one from the **Community** tab on the **Skills** page, or from the terminal:
+
+```sh
+brainwashed skills search email
+brainwashed skills install email-writer      # or a link to any SKILL.md
+brainwashed skills update
+```
+
+You always see the whole skill before it's installed, along with anything that looks like an attempt to take over the model (`crates/skills/src/review.rs`). Community skills are pinned to the commit that was reviewed and checked against their SHA-256. An installed skill records where it came from in `origin.json` next to its `SKILL.md`; skills you changed locally are never updated without asking. To share one of your own, press **Share** next to it, which opens a prefilled pull request on the registry. Teams can run their own index and set it under **Settings → Community skills index**.
+
 ## Cloud models
 
 Open **Cloud models** on the admin page, pick a provider (OpenAI, Anthropic, Google Gemini, OpenRouter, Groq, Mistral, DeepSeek, xAI, Together, Ollama on another machine, or any OpenAI-compatible API), paste an API key and choose which models to offer. They appear in the chat's model menu next to the local model. The key stays on your computer in `providers.json` and is never sent to devices; messages to a cloud model do leave your computer, and the chat says so whenever one is picked. Admins decide whether members may use each provider.

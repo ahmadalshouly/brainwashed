@@ -29,6 +29,7 @@ export function SettingsPage() {
       cloudflared_path: s.cloudflared_path?.trim() || null,
       phone_port: s.phone_port,
       check_for_updates: s.check_for_updates,
+      skill_index: s.skill_index?.trim() || null,
     };
     const next = await action.run(() => remote.updateSettings(patch));
     if (next) {
@@ -69,6 +70,15 @@ export function SettingsPage() {
             System prompt
             <textarea rows={5} value={s.system_prompt} onChange={(e) => set("system_prompt", e.target.value)} />
             <span className="muted small">Instructions the model gets before every conversation, for everyone.</span>
+          </label>
+          <label>
+            Community skills index
+            <input
+              placeholder="BrainWashed community registry"
+              value={s.skill_index ?? ""}
+              onChange={(e) => set("skill_index", e.target.value)}
+            />
+            <span className="muted small">Leave empty to browse the BrainWashed registry, or point at your own team's index.json.</span>
           </label>
         </div>
       </Card>

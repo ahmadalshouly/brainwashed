@@ -29,6 +29,7 @@ const AUDITED: &[&str] = &[
     "setSkillEnabled",
     "saveSkill",
     "deleteSkill",
+    "installSkill",
     "updateSettings",
     "createPairingOffer",
     "removeDevice",
@@ -64,7 +65,7 @@ pub(crate) async fn handle(
     if device.role != DeviceRole::Admin && !MEMBER_METHODS.contains(&method) {
         return Err("Only admins can do that. Ask an admin to make this device an admin.".into());
     }
-    let target = ["id", "name", "repo", "role"]
+    let target = ["id", "name", "repo", "role", "spec"]
         .iter()
         .find_map(|k| params[*k].as_str().or(params["provider"][*k].as_str()))
         .map(str::to_string);
@@ -224,6 +225,25 @@ async fn call(gw: &Gateway, device: &Device, method: &str, params: Value) -> Cal
                 .map_err(err)?;
             Ok(Value::Null)
         }
+        "communitySkills" => engine
+            .community_skills()
+            .await
+            .map_err(err)
+            .and_then(to_json),
+        "previewSkill" => engine
+            .preview_skill(str_param(&params, "spec")?)
+            .await
+            .map_err(err)
+            .and_then(to_json),
+        "installSkill" => engine
+            .install_skill(
+                str_param(&params, "spec")?,
+                params["sha256"].as_str(),
+                params["replace"].as_bool().unwrap_or(false),
+            )
+            .await
+            .map_err(err)
+            .and_then(to_json),
         "setSkillEnabled" => {
             let name = str_param(&params, "name")?;
             let enabled = params["enabled"].as_bool().ok_or("missing enabled")?;
@@ -373,6 +393,13 @@ fn merge_settings(settings: Settings, patch: &Value) -> Result<Settings, String>
             }
         };
     }
+    next.skill_index = match next.skill_index.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(u) if u.starts_with("https://") || u.starts_with("http://localhost") => {
+            Some(u.to_string())
+        }
+        Some(_) => return Err("the skills index address must start with https://".into()),
+    };
     if next
         .tunnel_token
         .as_deref()

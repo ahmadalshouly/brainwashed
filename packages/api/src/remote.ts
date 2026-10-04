@@ -26,6 +26,8 @@ import type {
   PairingOffer,
   SkillInfo,
   SkillList,
+  CommunitySkill,
+  SkillPreview,
   UpdateInfo,
 } from "./types";
 
@@ -300,6 +302,13 @@ export class RemoteHost {
   /** Saves a SKILL.md; returns the skill's name. */
   saveSkill = (source: string, previousName?: string) => this.call<string>("saveSkill", { source, previousName });
   deleteSkill = (name: string) => this.call<null>("deleteSkill", { name });
+  /** Skills in the community index. */
+  communitySkills = () => this.call<CommunitySkill[]>("communitySkills");
+  /** Downloads a skill to read before installing: a community skill's name or a link. */
+  previewSkill = (spec: string) => this.call<SkillPreview>("previewSkill", { spec });
+  /** Installs what `previewSkill` showed; fails if the file changed since (`sha256`). */
+  installSkill = (spec: string, sha256: string, replace = false) =>
+    this.call<SkillPreview>("installSkill", { spec, sha256, replace });
   settings = () => this.call<HostSettings>("settings");
   updateSettings = (settings: Partial<HostSettings>) => this.call<HostSettings>("updateSettings", { settings });
   access = () => this.call<AccessStatus>("access");

@@ -1,6 +1,7 @@
 //! The BrainWashed engine. The `brainwashed` command and the gateway it
 //! serves talk to the model through [`Engine`].
 
+mod community;
 mod documents;
 mod engine;
 mod providers;
@@ -15,6 +16,9 @@ pub use brainwashed_runtime::{
     Attachment, Backend, ChatMessage, Endpoint, Hardware, ReplyStats, Role,
 };
 pub use brainwashed_skills as skill_format;
+pub use community::{
+    raw_skill_url, CommunitySkill, SkillOrigin, SkillPreview, DEFAULT_SKILL_INDEX, ORIGIN_FILE,
+};
 pub use documents::{read_document, Document, MAX_DOCUMENT_BYTES};
 pub use engine::{CatalogItem, Engine, EngineConfig, EngineState, Event, HostInfo};
 pub use providers::{ChatModel, Provider, ProviderInfo, LOCAL_MODEL};

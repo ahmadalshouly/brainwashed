@@ -2,9 +2,11 @@
 //! the model's prompt at inference time. See `skills-examples/` for the format.
 
 mod registry;
+mod review;
 mod router;
 
 pub use registry::{fingerprint, save, LoadError, Registry, SkillEntry, SkillSummary, SKILL_FILE};
+pub use review::{review, MAX_BODY_CHARS};
 pub use router::{Router, MAX_ACTIVE_SKILLS};
 
 use serde::{Deserialize, Serialize};
