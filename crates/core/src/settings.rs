@@ -1,4 +1,4 @@
-use brainwashed_runtime::Backend;
+use brainwashed_runtime::{Backend, SamplingOptions};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -41,6 +41,9 @@ pub struct Settings {
     pub cloudflared_path: Option<PathBuf>,
     /// Look on GitHub for newer releases at startup.
     pub check_for_updates: bool,
+    /// Model settings for every chat, from every device. A chat can still
+    /// set its own; anything left out uses the model's defaults.
+    pub chat_defaults: SamplingOptions,
     /// Community skill index to browse. None uses the BrainWashed registry.
     pub skill_index: Option<String>,
 }
@@ -80,6 +83,7 @@ impl Default for Settings {
             public_url: None,
             cloudflared_path: None,
             check_for_updates: true,
+            chat_defaults: SamplingOptions::default(),
             skill_index: None,
         }
     }

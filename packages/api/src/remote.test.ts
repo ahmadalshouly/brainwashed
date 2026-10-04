@@ -120,10 +120,10 @@ describe.skipIf(!devserver)("against the real gateway", () => {
     const hostInfo = await remote.info();
     expect(hostInfo.version).toBeTruthy();
     const skills = await remote.skills();
-    expect(skills.map((s) => s.name)).toContain("email-writer");
+    expect(skills.map((s) => s.name)).toContain("writing-assistant");
 
-    await remote.setSkillEnabled("email-writer", false);
-    expect((await remote.skills()).find((s) => s.name === "email-writer")?.enabled).toBe(false);
+    await remote.setSkillEnabled("writing-assistant", false);
+    expect((await remote.skills()).find((s) => s.name === "writing-assistant")?.enabled).toBe(false);
 
     const events: string[] = [];
     const chat = remote.chat([{ role: "user", content: "Draft an email to my landlord" }], (e) => events.push(e.kind));

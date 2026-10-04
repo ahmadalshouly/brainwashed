@@ -123,3 +123,20 @@ async fn installs_from_a_link_and_notices_local_edits() {
     assert!(!info.origin.unwrap().community);
     assert!(info.modified);
 }
+
+#[tokio::test]
+async fn wont_replace_a_built_in_skill() {
+    let (_dir, engine, served, base) = setup().await;
+    *served.lock().unwrap() = SKILL.replace("name: haiku", "name: writing-assistant");
+    let err = engine
+        .install_skill(&format!("{base}/haiku.md"), None, true)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("comes with BrainWashed"), "{err}");
+    assert!(engine
+        .skills()
+        .skills
+        .iter()
+        .any(|s| s.builtin && s.entry.skill.name == "writing-assistant"));
+}

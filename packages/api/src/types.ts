@@ -116,6 +116,8 @@ export interface SkillInfo extends SkillSummary {
   triggers: string[];
   version: number;
   path: string;
+  /** Ships with BrainWashed: it can be turned off but not deleted. */
+  builtin?: boolean;
   /** Where it was installed from; missing for skills written on the host. */
   origin?: SkillOrigin | null;
   /** Changed on the host since it was installed. */
@@ -291,6 +293,8 @@ export interface HostSettings {
   public_url: string | null;
   cloudflared_path: string | null;
   check_for_updates: boolean;
+  /** Model settings for every chat, from every device. A chat's own options win. */
+  chat_defaults: ChatOptions;
   /** Community skill index to browse; null uses the BrainWashed registry. */
   skill_index: string | null;
 }

@@ -5,7 +5,7 @@ use crate::community::{read_origin, sha256_hex, SkillOrigin};
 use crate::engine::Event;
 use crate::{Engine, Error, Result};
 use brainwashed_runtime::chat::Delta;
-use brainwashed_runtime::{ChatMessage, ReplyStats, Role};
+use brainwashed_runtime::{Attachment, ChatMessage, ReplyStats, Role};
 use brainwashed_skills::{fingerprint, LoadError, Registry, Router, SkillEntry, SKILL_FILE};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -15,21 +15,63 @@ use std::time::Duration;
 /// instructions, so anything beyond this is cut.
 pub const MAX_SKILL_CHARS: usize = brainwashed_skills::MAX_BODY_CHARS;
 
-/// Skills that ship with BrainWashed and are copied in on first run.
-const BUNDLED: &[(&str, &str)] = &[
+/// Skills that ship with BrainWashed. They are installed on every start
+/// when missing, and replaced when this version of BrainWashed carries a
+/// newer `version`. They can be turned off but not deleted.
+pub const BUILTIN_SKILLS: &[(&str, &str)] = &[
+    (
+        "document-analyst",
+        include_str!("../../../builtin-skills/document-analyst/SKILL.md"),
+    ),
+    (
+        "writing-assistant",
+        include_str!("../../../builtin-skills/writing-assistant/SKILL.md"),
+    ),
+];
+
+/// Example skills earlier versions installed. They are removed unless
+/// someone edited them.
+const RETIRED: &[(&str, &str)] = &[
     (
         "meal-planner",
-        include_str!("../../../skills-examples/meal-planner/SKILL.md"),
+        include_str!("retired_skills/meal-planner.md"),
     ),
     (
         "email-writer",
-        include_str!("../../../skills-examples/email-writer/SKILL.md"),
+        include_str!("retired_skills/email-writer.md"),
     ),
     (
         "explain-simply",
-        include_str!("../../../skills-examples/explain-simply/SKILL.md"),
+        include_str!("retired_skills/explain-simply.md"),
     ),
 ];
+
+/// Puts the built-in skills in place and clears out the old examples.
+fn install_builtin(dir: &Path) -> Result<()> {
+    let same = |a: &str, b: &str| a.replace("\r\n", "\n").trim() == b.replace("\r\n", "\n").trim();
+    for (name, source) in RETIRED {
+        let folder = dir.join(name);
+        if std::fs::read_to_string(folder.join(SKILL_FILE))
+            .is_ok_and(|on_disk| same(&on_disk, source))
+        {
+            std::fs::remove_dir_all(&folder)?;
+        }
+    }
+    for (name, source) in BUILTIN_SKILLS {
+        let path = dir.join(name).join(SKILL_FILE);
+        let shipped = brainwashed_skills::Skill::parse(source)
+            .map(|s| s.meta.version)
+            .unwrap_or(1);
+        let installed = std::fs::read_to_string(&path)
+            .ok()
+            .map(|text| brainwashed_skills::Skill::parse(&text).map_or(0, |s| s.meta.version));
+        if installed.map_or(true, |v| v < shipped) {
+            std::fs::create_dir_all(dir.join(name))?;
+            std::fs::write(&path, source)?;
+        }
+    }
+    Ok(())
+}
 
 /// What the UI and phones see while a reply streams.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -65,6 +107,8 @@ pub struct SkillInfo {
     #[serde(flatten)]
     pub entry: SkillEntry,
     pub enabled: bool,
+    /// Ships with BrainWashed: it can be turned off but not deleted.
+    pub builtin: bool,
     /// Where it was installed from, for skills that weren't written here.
     pub origin: Option<SkillOrigin>,
     /// Changed on this computer since it was installed.
@@ -86,12 +130,8 @@ pub(crate) struct SkillState {
 
 impl SkillState {
     pub(crate) fn open(dir: &Path) -> Result<Self> {
-        if !dir.exists() {
-            for (name, source) in BUNDLED {
-                std::fs::create_dir_all(dir.join(name))?;
-                std::fs::write(dir.join(name).join(SKILL_FILE), source)?;
-            }
-        }
+        std::fs::create_dir_all(dir)?;
+        install_builtin(dir)?;
         Ok(SkillState {
             dir: dir.to_path_buf(),
             registry: Registry::load(dir),
@@ -109,6 +149,31 @@ impl SkillState {
         self.fingerprint = now;
         true
     }
+}
+
+/// Whether a skill is one of the built-in ones, in its own folder.
+fn is_builtin(entry: &SkillEntry) -> bool {
+    BUILTIN_SKILLS.iter().any(|(name, _)| {
+        entry.skill.name == *name
+            && entry
+                .path
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|folder| folder == *name)
+    })
+}
+
+/// What skills are matched against: the message, plus a note of what is
+/// attached, so a document brings in skills that read documents.
+fn routing_text(m: &ChatMessage) -> String {
+    let mut text = m.content.clone();
+    for a in &m.attachments {
+        text.push_str(match a {
+            Attachment::File { .. } => " (attached document)",
+            Attachment::Image { .. } => " (attached picture)",
+        });
+    }
+    text
 }
 
 impl Engine {
@@ -132,6 +197,7 @@ impl Engine {
                     });
                     SkillInfo {
                         enabled: !disabled.contains(&entry.skill.name),
+                        builtin: is_builtin(&entry),
                         entry,
                         origin,
                         modified,
@@ -175,6 +241,11 @@ impl Engine {
             .into_iter()
             .find(|s| s.entry.skill.name == name)
         {
+            if info.builtin {
+                return Err(Error::Invalid(format!(
+                    "{name} comes with BrainWashed and can't be deleted. Turn it off instead."
+                )));
+            }
             if let Some(folder) = info.entry.path.parent() {
                 std::fs::remove_dir_all(folder)?;
             }
@@ -239,8 +310,8 @@ impl Engine {
         let mut system = settings.system_prompt;
 
         let mut user_turns = conversation.iter().rev().filter(|m| m.role == Role::User);
-        let last = user_turns.next().map(|m| m.content.as_str()).unwrap_or("");
-        let previous = user_turns.next().map(|m| m.content.as_str());
+        let last = user_turns.next().map(routing_text).unwrap_or_default();
+        let previous = user_turns.next().map(routing_text);
 
         let state = self.inner.skills.read().unwrap();
         let enabled: Vec<_> = state
@@ -256,7 +327,7 @@ impl Engine {
             for s in &enabled {
                 system.push_str(&format!("- {}: {}\n", s.meta.name, s.meta.description));
             }
-            for skill in Router::new(enabled.iter().copied()).route(last, previous) {
+            for skill in Router::new(enabled.iter().copied()).route(&last, previous.as_deref()) {
                 system.push_str(&format!(
                     "\n## Skill: {}\n{}\n",
                     skill.meta.name,

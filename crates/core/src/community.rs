@@ -236,6 +236,16 @@ impl Engine {
                     .into(),
             ));
         }
+        if crate::skills::BUILTIN_SKILLS
+            .iter()
+            .any(|(name, _)| *name == preview.name)
+        {
+            return Err(Error::Invalid(format!(
+                "`{}` is the name of a skill that comes with BrainWashed; \
+                 the community skill needs a different name",
+                preview.name
+            )));
+        }
         if preview.installed && !replace {
             return Err(Error::Invalid(format!(
                 "you already have a skill named `{}`",

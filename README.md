@@ -2,7 +2,7 @@
 
 Turn your laptop into a private AI server, and use it from your phone or any browser, anywhere.
 
-BrainWashed is one command, `brainwashed`. It runs open source language models on your own computer (macOS, Windows, Linux), lets you teach it new abilities by dropping in a markdown **skill** file, and serves a web app: chat for everyone, and admin pages to manage models, skills, devices, remote access and settings. Chats take pictures, PDFs and documents, and each chat can tune thinking, temperature and reply length. When a local model isn't enough, admins can connect OpenAI, Anthropic, Gemini, OpenRouter or any OpenAI-compatible provider with their own API key. A built-in secure tunnel makes it reachable from anywhere with no router setup. Optional iOS/Android apps connect to the same host. Your conversations stay end-to-end encrypted between your devices and hardware you own.
+BrainWashed is one command, `brainwashed`. It runs open source language models on your own computer (macOS, Windows, Linux), lets you teach it new abilities by dropping in a markdown **skill** file, and serves a web app: chat for everyone, and admin pages to manage models, skills, devices, remote access and settings. Chats take pictures, PDFs and documents. Admins set thinking, temperature and reply length for everyone in Settings, and each chat can change them for itself. When a local model isn't enough, admins can connect OpenAI, Anthropic, Gemini, OpenRouter or any OpenAI-compatible provider with their own API key. A built-in secure tunnel makes it reachable from anywhere with no router setup. Optional iOS/Android apps connect to the same host. Your conversations stay end-to-end encrypted between your devices and hardware you own.
 
 > **Status:** pre-release. See [install.md](docs/install.md) to try it, and the [architecture and roadmap](docs/architecture.md) for what's next.
 
@@ -26,7 +26,7 @@ On Windows 11, if loading a model fails with `0xc0e90002`, Smart App Control is 
 | `crates/skills` | Parser and loader for `SKILL.md` files |
 | `crates/gateway` | The host's server: encrypted API for paired devices, roles, audit log, tunnel and relay connection |
 | `crates/relay` | Relay server for using BrainWashed away from home ([docs](docs/relay.md)) |
-| `skills-examples` | Example skills |
+| `builtin-skills` | Skills that ship with BrainWashed |
 | `docs` | Architecture and design notes |
 
 ## Getting started
@@ -46,8 +46,8 @@ A skill is a folder with a `SKILL.md` file: YAML frontmatter describing it, foll
 
 ```markdown
 ---
-name: email-writer
-description: Drafts and rewrites emails in the right tone for the recipient.
+name: writing-assistant
+description: Writes, rewrites and proofreads emails in the right tone.
 triggers: [write an email, draft an email]
 ---
 When the user wants an email written:
@@ -61,7 +61,12 @@ How it works:
 - For each message the host picks at most two relevant skills and adds their full instructions. A `triggers` phrase in the message always selects a skill; otherwise skills are matched by the distinctive words they share with the message (and the previous message, so follow-ups keep their skill).
 - Skills are never trained into the model, so a new skill works on the next message.
 
-See [`skills-examples`](skills-examples) for the skills that ship with BrainWashed.
+BrainWashed ships with two skills, in [`builtin-skills`](builtin-skills):
+
+- **document-analyst** summarizes and answers questions about attached PDFs, Word files and text, quoting the document and never inventing facts.
+- **writing-assistant** writes, rewrites and proofreads emails and messages in the right tone.
+
+They are always installed and update with BrainWashed. Admins can turn them off, but not delete them. To customize one, save a copy under a new name and turn the original off.
 
 ### Community skills
 

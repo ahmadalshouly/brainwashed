@@ -236,6 +236,10 @@ impl Engine {
     }
 
     pub fn update_settings(&self, settings: Settings) -> Result<()> {
+        settings
+            .chat_defaults
+            .validate()
+            .map_err(|e| Error::Invalid(format!("chat defaults: {e}")))?;
         let path = self.inner.config.data_dir.join("settings.json");
         store::save(&path, &settings)?;
         // It can hold a tunnel token.
@@ -593,6 +597,8 @@ impl Engine {
         admin: bool,
         mut on_event: impl FnMut(ChatEvent),
     ) -> Result<String> {
+        // The chat's own settings win; the admin's defaults fill the rest.
+        let sampling = &sampling.clone().or(&self.settings().chat_defaults);
         sampling
             .validate()
             .map_err(|e| Error::Invalid(e.to_string()))?;

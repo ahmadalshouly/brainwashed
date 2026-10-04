@@ -132,7 +132,7 @@ async fn pairs_and_answers_encrypted_calls() {
     let info = phone.call("info", Value::Null).await;
     assert_eq!(info["ok"]["version"], "0.1.0");
     let skills = phone.call("skills", Value::Null).await;
-    assert_eq!(skills["ok"].as_array().unwrap().len(), 3);
+    assert_eq!(skills["ok"].as_array().unwrap().len(), 2);
     let unknown = phone.call("nope", Value::Null).await;
     assert!(unknown["error"]
         .as_str()
@@ -421,7 +421,7 @@ async fn members_chat_and_admins_manage() {
     for (method, params) in [
         ("settings", Value::Null),
         ("devices", Value::Null),
-        ("deleteSkill", json!({ "name": "meal-planner" })),
+        ("deleteSkill", json!({ "name": "writing-assistant" })),
         ("loadModel", json!({ "id": "x" })),
     ] {
         let denied = member.call(method, params).await;
@@ -433,7 +433,7 @@ async fn members_chat_and_admins_manage() {
 
     // Admins manage skills, settings and devices.
     let source = admin
-        .call("skillSource", json!({ "name": "meal-planner" }))
+        .call("skillSource", json!({ "name": "writing-assistant" }))
         .await;
     assert!(source["ok"].as_str().unwrap().contains("name:"));
     let settings = admin
@@ -444,6 +444,30 @@ async fn members_chat_and_admins_manage() {
         .await;
     assert_eq!(settings["ok"]["host_name"], "Office AI", "{settings}");
     assert_eq!(settings["ok"]["tunnel_token"], Value::Null);
+
+    // Chat defaults set by an admin reach every device.
+    let saved = admin
+        .call(
+            "updateSettings",
+            json!({ "settings": { "chat_defaults": { "temperature": 0.3, "reasoning": false } } }),
+        )
+        .await;
+    assert_eq!(saved["ok"]["chat_defaults"]["temperature"], 0.3, "{saved}");
+    let defaults = member.call("chatDefaults", Value::Null).await;
+    assert_eq!(
+        defaults["ok"],
+        json!({ "temperature": 0.3, "reasoning": false })
+    );
+    let bad = admin
+        .call(
+            "updateSettings",
+            json!({ "settings": { "chat_defaults": { "temperature": 7 } } }),
+        )
+        .await;
+    assert!(
+        bad["error"].as_str().unwrap().contains("temperature"),
+        "{bad}"
+    );
     let devices = admin.call("devices", Value::Null).await;
     let devices = devices["ok"].as_array().unwrap();
     assert_eq!(devices.len(), 2);

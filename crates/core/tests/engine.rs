@@ -188,6 +188,12 @@ async fn chat_checks_options_and_pictures() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("PNG, JPEG"), "{err}");
+
+    // The admin's chat defaults are checked when saved.
+    let mut settings = engine.settings();
+    settings.chat_defaults.temperature = Some(9.0);
+    let err = engine.update_settings(settings).unwrap_err();
+    assert!(err.to_string().contains("temperature"), "{err}");
 }
 
 #[test]
@@ -242,7 +248,9 @@ async fn end_to_end_with_real_llama_server() {
     let services = fake_services(std::fs::read(model).unwrap(), zip_bytes).await;
     let engine = engine(dir.path(), &services);
     let mut s = engine.settings();
-    s.context_size = 512;
+    // The test model spends a token per byte, and the skill index alone is
+    // a few hundred bytes.
+    s.context_size = 2048;
     s.gpu_layers = 0;
     engine.update_settings(s).unwrap();
 

@@ -219,7 +219,7 @@ function MySkills({
                 <span />
               </label>
               <div className="grow">
-                <strong>{s.name}</strong> {!s.enabled && <Badge>off</Badge>}{" "}
+                <strong>{s.name}</strong> {s.builtin && <Badge>built-in</Badge>} {!s.enabled && <Badge>off</Badge>}{" "}
                 {s.origin && <Badge>{s.origin.community ? "community" : "from a link"}</Badge>}{" "}
                 {s.modified && <Badge kind="warn">edited</Badge>}
                 <div className="muted small">{s.description}</div>
@@ -242,21 +242,23 @@ function MySkills({
                   Update
                 </button>
               )}
-              {!s.origin && (
+              {!s.origin && !s.builtin && (
                 <button title="Share it with everyone who uses BrainWashed" onClick={() => onShare(s.name)}>
                   Share
                 </button>
               )}
               <button onClick={() => onEdit(s.name)}>Edit</button>
-              <button
-                className="danger-text"
-                onClick={() => {
-                  if (confirm(`Delete the skill ${s.name}?`))
-                    action.run(async () => (await remote.deleteSkill(s.name), list.reload()));
-                }}
-              >
-                Delete
-              </button>
+              {!s.builtin && (
+                <button
+                  className="danger-text"
+                  onClick={() => {
+                    if (confirm(`Delete the skill ${s.name}?`))
+                      action.run(async () => (await remote.deleteSkill(s.name), list.reload()));
+                  }}
+                >
+                  Delete
+                </button>
+              )}
             </div>
           ))}
         </div>

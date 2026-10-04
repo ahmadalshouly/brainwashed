@@ -287,6 +287,8 @@ export class RemoteHost {
   whoami = () => this.call<DeviceIdentity>("whoami");
   /** The local model (when loaded) and the cloud models this device may use. */
   chatModels = () => this.call<ChatModel[]>("chatModels");
+  /** The admin's model settings, used for anything a chat leaves out. */
+  chatDefaults = () => this.call<ChatOptions>("chatDefaults");
 
   // Admins only.
   loadModel = (id: string) => this.call<null>("loadModel", { id });

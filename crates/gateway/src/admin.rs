@@ -18,6 +18,7 @@ const MEMBER_METHODS: &[&str] = &[
     "whoami",
     "readDocument",
     "chatModels",
+    "chatDefaults",
 ];
 
 /// Calls that change something, recorded in the audit log.
@@ -97,6 +98,7 @@ async fn call(gw: &Gateway, device: &Device, method: &str, params: Value) -> Cal
         })),
 
         "chatModels" => to_json(engine.chat_models(device.role == DeviceRole::Admin)),
+        "chatDefaults" => to_json(engine.settings().chat_defaults),
         "readDocument" => {
             use base64::Engine as _;
             let name = str_param(&params, "name")?.to_string();

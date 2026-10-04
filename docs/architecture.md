@@ -61,13 +61,13 @@ Important framing: a skill is **injected into the prompt at runtime**, not train
 
 ```markdown
 ---
-name: meal-planner
-description: Plans weekly meals from what's in the fridge and dietary goals.
-triggers: [meal plan, what should I cook, groceries]
+name: writing-assistant
+description: Writes, rewrites and proofreads emails, messages and documents in the right tone.
+triggers: [write an email, proofread, rewrite this]
 version: 1
 ---
-When the user asks for a meal plan:
-1. Ask for ingredients on hand if not given.
+You are a careful professional editor and writer.
+1. Work out the reader, the goal and the tone.
 2. ...
 ```
 
@@ -115,7 +115,7 @@ brainwashed/
   crates/skills/      Skill parser, router
   crates/gateway/     Pairing, auth, relay client
   crates/relay/       Relay server for access away from home
-  skills-examples/    Starter skills
+  builtin-skills/     Skills that ship with BrainWashed
   docs/
 ```
 
