@@ -22,6 +22,21 @@ export interface SkillSummary {
   enabled: boolean;
 }
 
+/** A skill as the host lists it. Mirrors `SkillInfo` in crates/core. */
+export interface SkillInfo extends SkillSummary {
+  triggers: string[];
+  version: number;
+  path: string;
+}
+
+export interface SkillList {
+  /** Folder the skills live in, one subfolder per skill. */
+  dir: string;
+  skills: SkillInfo[];
+  /** Skill files that could not be loaded. */
+  errors: { path: string; message: string }[];
+}
+
 export interface ChatRequest {
   messages: ChatMessage[];
   /** Model id; the host's active model is used when omitted. */
@@ -31,3 +46,87 @@ export interface ChatRequest {
 export interface ChatResponse {
   message: ChatMessage;
 }
+
+/** What streams back during a reply. Mirrors `ChatEvent` in crates/core. */
+export type ChatEvent =
+  | { kind: "skills"; names: string[] }
+  | { kind: "content"; text: string }
+  | { kind: "reasoning"; text: string };
+
+/** Mirrors `EngineState` in crates/core. */
+export type EngineState =
+  | { state: "idle" }
+  | { state: "installingRuntime"; done: number; total: number | null }
+  | { state: "loading"; model: string }
+  | { state: "ready"; model: string }
+  | { state: "error"; message: string };
+
+export interface InstalledModel {
+  id: string;
+  name: string;
+  repo: string | null;
+  path: string;
+  size: number;
+}
+
+export interface CatalogItem {
+  repo: string;
+  name: string;
+  description: string;
+  params_b: number;
+  license: string;
+  installed: boolean;
+  fits: boolean;
+}
+
+/** Mirrors `Event` in crates/core. */
+export type EngineEvent =
+  | ({ type: "state" } & EngineState)
+  | { type: "downloadProgress"; repo: string; done: number; total: number | null }
+  | { type: "downloadFinished"; repo: string; model: InstalledModel }
+  | { type: "downloadFailed"; repo: string; error: string }
+  | { type: "modelsChanged" }
+  | { type: "skillsChanged" };
+
+/** A phone paired with the host. Mirrors `Device` in crates/gateway. */
+export interface PairedDevice {
+  id: string;
+  name: string;
+  publicKey: string;
+  pairedAt: number;
+  lastSeen: number | null;
+}
+
+export interface PhoneAccessStatus {
+  running: boolean;
+  port: number | null;
+  addresses: string[];
+  hostId: string;
+  /** Remote access through a relay, when one is set. */
+  relay: RelayStatus | null;
+}
+
+export interface RelayStatus {
+  url: string;
+  connected: boolean;
+  /** Why the last attempt failed, while not connected. */
+  error: string | null;
+}
+
+export interface UpdateInfo {
+  version: string;
+  /** Release page with the installers. */
+  url: string;
+}
+
+export interface PairingOffer {
+  /** App link, `brainwashed://pair?...`. */
+  url: string;
+  /** The same details as a link to the host's web chat. This is what the QR code shows. */
+  webUrl: string;
+  expiresAt: number;
+  addresses: string[];
+  port: number;
+}
+
+export type GatewayEvent = { type: "devicePaired"; device: PairedDevice } | { type: "devicesChanged" };

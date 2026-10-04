@@ -11,11 +11,15 @@
     "test": "pnpm -r --if-present test",
     "build": "pnpm -r --if-present build",
     "host:dev": "pnpm --filter @brainwashed/host tauri dev",
-    "mobile:start": "pnpm --filter @brainwashed/mobile start"
+    "web:build": "pnpm --filter @brainwashed/web build"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
-    ]
+    ],
+    "overrides": {
+      "react": "19.2.3",
+      "react-dom": "19.2.3"
+    }
   }
 }
