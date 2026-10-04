@@ -36,6 +36,7 @@ BrainWashed checks GitHub for new releases when it starts and shows **Version X 
 ## Using it from other devices
 
 - At home: open **Devices** and pair a phone or another computer with the QR code. See the [README](../README.md#using-it-from-your-phone-or-another-computer).
+- On Windows, the first time you turn on **Allow phones and browsers on this network**, Windows Firewall asks whether BrainWashed may use the network. Tick **Private networks** and click **Allow access**. Your Wi-Fi must also be set to a private network (Settings > Network & internet > Wi-Fi > your network > **Private network**), or phones can't connect.
 - Away from home: set up a relay. See [relay.md](relay.md).
 
 ## Uninstalling
