@@ -4,21 +4,27 @@
 //! device's key, so nothing readable crosses the network even over plain HTTP,
 //! a tunnel or a relay.
 //!
+//! It also serves an OpenAI-compatible API (`openai`) for scripts and other
+//! apps, with keys admins create (`api_keys`).
+//!
 //! It also serves the web app (`apps/web`): chat for everyone, and the admin
 //! pages for admins. Remote access runs through a Cloudflare tunnel
 //! (`tunnel`), a stable public address, or a self-hosted relay (`relay`).
 
 mod admin;
+pub mod api_keys;
 pub mod audit;
 mod control;
 pub mod crypto;
 pub mod devices;
+mod openai;
 pub mod relay;
 mod replies;
 mod server;
 pub mod tunnel;
 mod web;
 
+pub use api_keys::ApiKey;
 pub use audit::AuditEntry;
 pub use devices::{Device, DeviceRole};
 pub use relay::RelayStatus;

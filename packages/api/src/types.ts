@@ -241,6 +241,24 @@ export interface PairedDevice {
   current?: boolean;
 }
 
+/** A key for the OpenAI-compatible API (`/v1`). The key itself is only shown once, when it's created. */
+export interface ApiKey {
+  id: string;
+  name: string;
+  /** Admin keys also reach cloud models that aren't shared with members. */
+  role: DeviceRole;
+  /** The start of the key, to tell keys apart. */
+  hint: string;
+  createdAt: number;
+  lastUsed: number | null;
+}
+
+/** What `createApiKey` returns: the new key's details and the key itself. */
+export interface NewApiKey {
+  key: ApiKey;
+  secret: string;
+}
+
 /** Who the host thinks this device is (`whoami`). */
 export interface DeviceIdentity {
   deviceId: string;

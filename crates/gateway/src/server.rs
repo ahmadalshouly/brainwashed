@@ -1,3 +1,4 @@
+use crate::api_keys::ApiKeyStore;
 use crate::audit::{AuditEntry, AuditLog};
 use crate::crypto::{self, Envelope, HostKeys};
 use crate::devices::{Device, DeviceRole, DeviceStore};
@@ -99,6 +100,8 @@ pub(crate) struct Inner {
     pub(crate) keys: HostKeys,
     pub(crate) devices: DeviceStore,
     pub(crate) audit: AuditLog,
+    /// Keys for the OpenAI-compatible API.
+    pub(crate) api_keys: ApiKeyStore,
     data_dir: std::path::PathBuf,
     /// One-time pairing tokens: expiry (unix seconds) and the role they grant.
     offers: Mutex<HashMap<String, (u64, DeviceRole)>>,
@@ -138,6 +141,7 @@ impl Gateway {
                 keys: HostKeys::load_or_create(&dir.join("host.key"))?,
                 devices: DeviceStore::open(&dir.join("devices.json"))?,
                 audit: AuditLog::new(&dir.join("audit.jsonl")),
+                api_keys: ApiKeyStore::open(&dir.join("api-keys.json"))?,
                 data_dir: data_dir.to_path_buf(),
                 engine,
                 offers: Mutex::new(HashMap::new()),
@@ -473,6 +477,17 @@ impl Gateway {
             .route("/pair", post(pair))
             // Room for pictures and documents attached to a chat.
             .route("/rpc", post(rpc).layer(DefaultBodyLimit::max(MAX_RPC_BODY)))
+            // The OpenAI-compatible API, for scripts and other apps.
+            .route(
+                "/v1/models",
+                get(crate::openai::models).options(crate::openai::preflight),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(crate::openai::chat_completions)
+                    .options(crate::openai::preflight)
+                    .layer(DefaultBodyLimit::max(MAX_RPC_BODY)),
+            )
             .route("/control/status", get(crate::control::status))
             .route("/control/admin-link", post(crate::control::admin_link))
             .route("/control/stop", post(crate::control::stop))

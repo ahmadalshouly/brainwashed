@@ -5,6 +5,7 @@ import nacl from "tweetnacl";
 import { fromBase64, toBase64, utf8Decode, utf8Encode } from "./encoding";
 import type {
   AccessStatus,
+  ApiKey,
   AuditEntry,
   CatalogItem,
   ChatEvent,
@@ -22,6 +23,7 @@ import type {
   HostInfo,
   HostSettings,
   InstalledModel,
+  NewApiKey,
   PairedDevice,
   PairingOffer,
   SkillInfo,
@@ -332,6 +334,10 @@ export class RemoteHost {
   removeDevice = (id: string) => this.call<null>("removeDevice", { id });
   setDeviceRole = (id: string, role: DeviceRole) => this.call<null>("setDeviceRole", { id, role });
   renameDevice = (id: string, name: string) => this.call<null>("renameDevice", { id, name });
+  /** Keys for the OpenAI-compatible API. */
+  apiKeys = () => this.call<ApiKey[]>("apiKeys");
+  createApiKey = (name: string, role: DeviceRole = "member") => this.call<NewApiKey>("createApiKey", { name, role });
+  revokeApiKey = (id: string) => this.call<null>("revokeApiKey", { id });
   auditLog = (limit = 100) => this.call<AuditEntry[]>("auditLog", { limit });
   providers = () => this.call<ProviderInfo[]>("providers");
   /** Adds or updates a provider. Leave `apiKey` out to keep the saved key, or send "" to remove it. */

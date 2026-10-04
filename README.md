@@ -2,7 +2,7 @@
 
 Turn your laptop into a private AI server, and use it from your phone or any browser, anywhere.
 
-BrainWashed is one command, `brainwashed`. It runs open source language models on your own computer (macOS, Windows, Linux), lets you teach it new abilities by dropping in a markdown **skill** file, and serves a web app: chat for everyone, and admin pages to manage models, skills, devices, remote access and settings. Chats take pictures, PDFs and documents. Admins set thinking, temperature and reply length for everyone in Settings, and each chat can change them for itself. When a local model isn't enough, admins can connect OpenAI, Anthropic, Gemini, OpenRouter or any OpenAI-compatible provider with their own API key. A built-in secure tunnel makes it reachable from anywhere with no router setup. Optional iOS/Android apps connect to the same host. Your conversations stay end-to-end encrypted between your devices and hardware you own.
+BrainWashed is one command, `brainwashed`. It runs open source language models on your own computer (macOS, Windows, Linux), lets you teach it new abilities by dropping in a markdown **skill** file, and serves a web app: chat for everyone, and admin pages to manage models, skills, devices, remote access and settings. Chats take pictures, PDFs and documents. Admins set thinking, temperature and reply length for everyone in Settings, and each chat can change them for itself. When a local model isn't enough, admins can connect OpenAI, Anthropic, Gemini, OpenRouter or any OpenAI-compatible provider with their own API key. An OpenAI-compatible API lets scripts and other apps use the same models. A built-in secure tunnel makes it reachable from anywhere with no router setup. Optional iOS/Android apps connect to the same host. Your conversations stay end-to-end encrypted between your devices and hardware you own.
 
 > **Status:** pre-release. See [install.md](docs/install.md) to try it, and the [architecture and roadmap](docs/architecture.md) for what's next.
 
@@ -83,6 +83,10 @@ You always see the whole skill before it's installed, along with anything that l
 ## Cloud models
 
 Open **Cloud models** on the admin page, pick a provider (OpenAI, Anthropic, Google Gemini, OpenRouter, Groq, Mistral, DeepSeek, xAI, Together, Ollama on another machine, or any OpenAI-compatible API), paste an API key and choose which models to offer. They appear in the chat's model menu next to the local model. The key stays on your computer in `providers.json` and is never sent to devices; messages to a cloud model do leave your computer, and the chat says so whenever one is picked. Admins decide whether members may use each provider.
+
+## API
+
+BrainWashed also speaks the OpenAI API, so any OpenAI client, script or app can use your models. Open **API** on the admin page, create a key, and use the address shown there (for example `http://localhost:47860/v1`) as the base URL. Replies get the same skills and chat defaults as the chat. See [docs/api.md](docs/api.md).
 
 ## Using it from your phone, another computer, or your team
 

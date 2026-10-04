@@ -38,6 +38,8 @@ const AUDITED: &[&str] = &[
     "renameDevice",
     "saveProvider",
     "deleteProvider",
+    "createApiKey",
+    "revokeApiKey",
 ];
 
 type CallResult = Result<Value, String>;
@@ -263,6 +265,31 @@ async fn call(gw: &Gateway, device: &Device, method: &str, params: Value) -> Cal
         }
         "access" => to_json(gw.status()),
         "checkForUpdate" => to_json(engine.check_for_update().await),
+
+        // ----- API keys -----
+        "apiKeys" => to_json(gw.inner.api_keys.list()),
+        "createApiKey" => {
+            let role = if params["role"].is_null() {
+                DeviceRole::Member
+            } else {
+                role_param(&params)?
+            };
+            let name = params["name"].as_str().unwrap_or_default();
+            let (key, secret) = gw
+                .inner
+                .api_keys
+                .create(name, role, crate::server::now_secs())
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "key": key, "secret": secret }))
+        }
+        "revokeApiKey" => {
+            let id = str_param(&params, "id")?;
+            if gw.inner.api_keys.revoke(id).map_err(|e| e.to_string())? {
+                Ok(Value::Null)
+            } else {
+                Err("there's no such API key".into())
+            }
+        }
 
         // ----- devices -----
         "devices" => {
