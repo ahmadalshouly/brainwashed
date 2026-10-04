@@ -188,6 +188,12 @@ async fn chat_checks_options_and_pictures() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("PNG, JPEG"), "{err}");
+
+    // The admin's chat defaults are checked when saved.
+    let mut settings = engine.settings();
+    settings.chat_defaults.temperature = Some(9.0);
+    let err = engine.update_settings(settings).unwrap_err();
+    assert!(err.to_string().contains("temperature"), "{err}");
 }
 
 #[test]

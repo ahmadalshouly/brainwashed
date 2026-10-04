@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { HostSettings } from "@brainwashed/api";
+import type { ChatOptions, HostSettings } from "@brainwashed/api";
 import { Banner, Card, PageHeader, useAction, useHost, useLoad } from "../ui";
 
 export function SettingsPage() {
@@ -29,6 +29,7 @@ export function SettingsPage() {
       cloudflared_path: s.cloudflared_path?.trim() || null,
       phone_port: s.phone_port,
       check_for_updates: s.check_for_updates,
+      chat_defaults: s.chat_defaults ?? {},
     };
     const next = await action.run(() => remote.updateSettings(patch));
     if (next) {
@@ -48,7 +49,7 @@ export function SettingsPage() {
         }
       />
       {action.error && <Banner>{action.error}</Banner>}
-      {saved && !action.error && <Banner kind="ok">Saved. Model settings apply the next time a model loads.</Banner>}
+      {saved && !action.error && <Banner kind="ok">Saved. Chat defaults apply to the next message; runtime settings apply the next time a model loads.</Banner>}
 
       <Card title="General">
         <div className="form">
@@ -70,6 +71,38 @@ export function SettingsPage() {
             <textarea rows={5} value={s.system_prompt} onChange={(e) => set("system_prompt", e.target.value)} />
             <span className="muted small">Instructions the model gets before every conversation, for everyone.</span>
           </label>
+        </div>
+      </Card>
+
+      <Card title="Chat defaults">
+        <div className="form">
+          <span className="muted small">
+            Used by every chat on every device, including the phone apps. A chat can still change them for itself. Empty fields use the model's own defaults.
+          </span>
+          <label>
+            Thinking
+            <select
+              value={s.chat_defaults?.reasoning === undefined ? "" : s.chat_defaults.reasoning ? "on" : "off"}
+              onChange={(e) =>
+                set("chat_defaults", { ...s.chat_defaults, reasoning: e.target.value === "" ? undefined : e.target.value === "on" })
+              }
+            >
+              <option value="">Model default</option>
+              <option value="on">On: think before answering</option>
+              <option value="off">Off: answer right away (faster)</option>
+            </select>
+            <span className="muted small">For reasoning models such as Qwen3 and DeepSeek R1.</span>
+          </label>
+          <div className="form two">
+            <DefaultNumber label="Temperature" hint="0 to 2. Lower is focused, higher is creative." field="temperature" s={s} set={set} step={0.05} />
+            <DefaultNumber label="Longest reply (tokens)" hint="Leave empty for no limit." field="maxTokens" s={s} set={set} step={64} integer />
+            <DefaultNumber label="Top P" hint="0 to 1." field="topP" s={s} set={set} step={0.05} />
+            <DefaultNumber label="Top K" hint="Up to 1000. Local models only." field="topK" s={s} set={set} step={1} integer />
+            <DefaultNumber label="Min P" hint="0 to 1. Local models only." field="minP" s={s} set={set} step={0.01} />
+            <DefaultNumber label="Repeat penalty" hint="0.5 to 2. Local models only." field="repeatPenalty" s={s} set={set} step={0.05} />
+            <DefaultNumber label="Presence penalty" hint="-2 to 2." field="presencePenalty" s={s} set={set} step={0.1} />
+            <DefaultNumber label="Seed" hint="The same seed repeats the same reply." field="seed" s={s} set={set} step={1} integer />
+          </div>
         </div>
       </Card>
 
@@ -114,5 +147,44 @@ export function SettingsPage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+type NumberField = Exclude<keyof ChatOptions, "reasoning">;
+
+function DefaultNumber({
+  label,
+  hint,
+  field,
+  s,
+  set,
+  step,
+  integer,
+}: {
+  label: string;
+  hint: string;
+  field: NumberField;
+  s: HostSettings;
+  set: <K extends keyof HostSettings>(k: K, v: HostSettings[K]) => void;
+  step: number;
+  integer?: boolean;
+}) {
+  const value = s.chat_defaults?.[field];
+  return (
+    <label>
+      {label}
+      <input
+        type="number"
+        step={step}
+        placeholder="Model default"
+        value={value ?? ""}
+        onChange={(e) => {
+          const raw = e.target.value.trim();
+          const n = integer ? Math.round(Number(raw)) : Number(raw);
+          set("chat_defaults", { ...s.chat_defaults, [field]: raw === "" || Number.isNaN(n) ? undefined : n });
+        }}
+      />
+      <span className="muted small">{hint}</span>
+    </label>
   );
 }

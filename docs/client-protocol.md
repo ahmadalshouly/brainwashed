@@ -41,9 +41,10 @@ The host refuses the call if any of these hold:
 
 Replies are `{ n, c }` and decrypt to `{ ok: result }` or `{ error: message }`.
 
-Any paired device can call `info`, `state`, `models`, `skills`, `whoami` (its `{ deviceId, name, role }`), `chatModels`, `readDocument { name, data }` and `chat { messages, options?, model? }`.
+Any paired device can call `info`, `state`, `models`, `skills`, `whoami` (its `{ deviceId, name, role }`), `chatModels`, `chatDefaults`, `readDocument { name, data }` and `chat { messages, options?, model? }`.
 
 - `chatModels` lists what the chat can use: `{ id, name, provider, vision, cloud }`. `local` is the model running on the computer (listed only while one is loaded); cloud models are `<provider>/<model>` and appear when an admin connects a provider. Members see only the models admins share with them.
+- `chatDefaults` returns the admin's model settings for every chat, in the same shape as chat `options`. The host already applies them to anything a chat leaves out; clients show them so people know what "default" means.
 - `readDocument` takes a file as base64 (up to 25 MB) and returns `{ text, pages?, truncated }`. It reads PDFs, Word (.docx) and UTF-8 text. Send the text back as a `file` attachment.
 
 Admins can also call:
@@ -64,7 +65,7 @@ A member calling an admin method gets `{ error }`. Devices paired before roles e
 `chat` takes:
 
 - `messages`: `{ role, content, attachments? }[]`. An attachment is `{ type: "image", name, mime, data }` (base64 PNG, JPEG, WebP, GIF or BMP) or `{ type: "file", name, text }`. Pictures reach the model only if it can see them: the local model when it has a vision projector (`InstalledModel.mmproj`), or a cloud model. A model that can't see gets `[Picture: name]` instead, and the call fails if the latest user message has pictures. Requests can be up to 48 MB.
-- `options` (all optional): `temperature` (0 to 2), `topP`, `topK`, `minP`, `repeatPenalty`, `presencePenalty`, `seed`, `maxTokens`, and `reasoning` (true or false turns thinking on or off for models whose template supports it, such as Qwen3). Cloud providers get only the OpenAI-standard fields.
+- `options` (all optional): `temperature` (0 to 2), `topP`, `topK`, `minP`, `repeatPenalty`, `presencePenalty`, `seed`, `maxTokens`, and `reasoning` (true or false turns thinking on or off for models whose template supports it, such as Qwen3). Anything left out uses the admin's `chatDefaults` (the `chat_defaults` setting), then the model's own default. Cloud providers get only the OpenAI-standard fields.
 - `model`: an id from `chatModels`. Left out, the local model answers.
 
 It streams `application/x-ndjson`. Each line is an encrypted frame that decrypts to one of:

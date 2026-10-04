@@ -1,5 +1,5 @@
 //! Skills are markdown files with YAML frontmatter that the host injects into
-//! the model's prompt at inference time. See `skills-examples/` for the format.
+//! the model's prompt at inference time. See `builtin-skills/` for the format.
 
 mod registry;
 mod router;
@@ -104,8 +104,8 @@ mod tests {
     }
 
     #[test]
-    fn example_skills_parse() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills-examples");
+    fn builtin_skills_parse() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../builtin-skills");
         let mut count = 0;
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path().join("SKILL.md");
@@ -114,6 +114,6 @@ mod tests {
                 count += 1;
             }
         }
-        assert!(count > 0, "no example skills found");
+        assert!(count > 0, "no built-in skills found");
     }
 }

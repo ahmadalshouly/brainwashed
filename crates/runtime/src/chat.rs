@@ -128,6 +128,21 @@ pub struct SamplingOptions {
 }
 
 impl SamplingOptions {
+    /// These options, with anything left out taken from `defaults`.
+    pub fn or(self, defaults: &SamplingOptions) -> SamplingOptions {
+        SamplingOptions {
+            temperature: self.temperature.or(defaults.temperature),
+            top_p: self.top_p.or(defaults.top_p),
+            top_k: self.top_k.or(defaults.top_k),
+            min_p: self.min_p.or(defaults.min_p),
+            repeat_penalty: self.repeat_penalty.or(defaults.repeat_penalty),
+            presence_penalty: self.presence_penalty.or(defaults.presence_penalty),
+            seed: self.seed.or(defaults.seed),
+            max_tokens: self.max_tokens.or(defaults.max_tokens),
+            reasoning: self.reasoning.or(defaults.reasoning),
+        }
+    }
+
     /// Rejects values llama.cpp would misbehave with.
     pub fn validate(&self) -> Result<()> {
         let check = |name: &str, v: Option<f64>, lo: f64, hi: f64| match v {
@@ -477,6 +492,25 @@ impl SseParser {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chat_options_fall_back_to_defaults() {
+        let defaults = SamplingOptions {
+            temperature: Some(0.3),
+            reasoning: Some(false),
+            max_tokens: Some(512),
+            ..Default::default()
+        };
+        let chat = SamplingOptions {
+            temperature: Some(1.0),
+            ..Default::default()
+        };
+        let merged = chat.or(&defaults);
+        assert_eq!(merged.temperature, Some(1.0), "the chat's own value wins");
+        assert_eq!(merged.reasoning, Some(false));
+        assert_eq!(merged.max_tokens, Some(512));
+        assert_eq!(merged.top_p, None);
+    }
+
     use super::*;
 
     #[test]

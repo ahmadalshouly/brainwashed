@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { HostReplyError, type ChatMessage, type ChatModel, type InstalledModel } from "@brainwashed/api";
+import { HostReplyError, type ChatMessage, type ChatModel, type ChatOptions, type InstalledModel } from "@brainwashed/api";
 import { Markdown } from "../markdown";
 import { Icon, type IconName } from "../icons";
 import { ACCEPT, MAX_ATTACHMENTS, dataUrl, extension, prepare, type Draft } from "../attachments";
@@ -112,6 +112,9 @@ export function ChatPage({
     [remote, state?.state, state && "model" in state ? state.model : ""],
     20000,
   );
+  // The admin's chat defaults: whatever a chat leaves unset.
+  const hostDefaults = useLoad<ChatOptions>(() => remote.chatDefaults().catch(() => ({})), [remote], 60000);
+  const defaults = hostDefaults.value ?? {};
   const installed = useLoad<InstalledModel[]>(() => (admin ? remote.models() : Promise.resolve([])), [remote, admin, state?.state], 30000);
   const [modelId, setModelId] = useState(loadModelChoice);
   const models = chatModels.value ?? [];
@@ -463,12 +466,12 @@ export function ChatPage({
         </button>
         <button
           type="button"
-          className={`chip ${prefs.reasoning === false ? "" : prefs.reasoning ? "on" : ""}`}
+          className={`chip ${(prefs.reasoning ?? defaults.reasoning) ? "on" : ""}`}
           title="Whether reasoning models think before answering"
           onClick={() => setPrefs({ ...prefs, reasoning: prefs.reasoning === undefined ? false : prefs.reasoning === false ? true : undefined })}
         >
           <Icon name="brain" size={16} />
-          {prefs.reasoning === undefined ? "Think: auto" : prefs.reasoning ? "Think: on" : "Think: off"}
+          {(prefs.reasoning ?? defaults.reasoning) === undefined ? "Think: auto" : (prefs.reasoning ?? defaults.reasoning) ? "Think: on" : "Think: off"}
         </button>
         <button type="button" className={`chip ${tuneOpen ? "on" : ""}`} onClick={() => setTuneOpen(!tuneOpen)} title="Model settings">
           <Icon name="sliders" size={16} />
@@ -923,6 +926,7 @@ export function ChatPage({
       <aside className="tune glass" aria-label="Model settings" aria-hidden={!tuneOpen}>
         <TunePanel
           prefs={prefs}
+          defaults={defaults}
           setPrefs={setPrefs}
           cloud={!!cloud}
           instructions={instructions}
@@ -984,6 +988,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 
 function NumberAuto({
   value,
+  fallback,
   onChange,
   step,
   min,
@@ -991,6 +996,8 @@ function NumberAuto({
   label,
 }: {
   value: number | undefined;
+  /** The host's default, shown when the chat doesn't set one. */
+  fallback?: number;
   onChange: (v: number | undefined) => void;
   step: number;
   min: number;
@@ -1003,7 +1010,7 @@ function NumberAuto({
       <input
         type="number"
         inputMode="decimal"
-        placeholder="Auto"
+        placeholder={fallback === undefined ? "Auto" : String(fallback)}
         step={step}
         min={min}
         max={max}
@@ -1019,6 +1026,7 @@ function NumberAuto({
 
 function TunePanel({
   prefs,
+  defaults,
   setPrefs,
   cloud,
   instructions,
@@ -1026,6 +1034,7 @@ function TunePanel({
   onClose,
 }: {
   prefs: ChatPrefs;
+  defaults: ChatOptions;
   setPrefs: (p: ChatPrefs) => void;
   cloud: boolean;
   instructions: string;
@@ -1046,7 +1055,7 @@ function TunePanel({
       <Field label="Thinking" hint="Reasoning models like Qwen3 can think before they answer. Off is faster.">
         <div className="segmented">
           {([
-            [undefined, "Auto"],
+            [undefined, defaults.reasoning === undefined ? "Default" : `Default (${defaults.reasoning ? "on" : "off"})`],
             [true, "On"],
             [false, "Off"],
           ] as const).map(([v, label]) => (
@@ -1075,11 +1084,11 @@ function TunePanel({
             min={0}
             max={2}
             step={0.05}
-            value={prefs.temperature ?? 0.8}
+            value={prefs.temperature ?? defaults.temperature ?? 0.8}
             onChange={(e) => set({ temperature: Number(e.target.value), style: "custom" })}
             aria-label="Temperature"
           />
-          <output>{prefs.temperature?.toFixed(2) ?? "Auto"}</output>
+          <output>{prefs.temperature?.toFixed(2) ?? (defaults.temperature !== undefined ? `${defaults.temperature.toFixed(2)} (default)` : "Auto")}</output>
         </div>
       </Field>
 
@@ -1094,7 +1103,7 @@ function TunePanel({
             onChange={(e) => set({ maxTokens: LENGTHS[Number(e.target.value)] })}
             aria-label="Reply length"
           />
-          <output>{prefs.maxTokens ? `${prefs.maxTokens} tokens` : "No limit"}</output>
+          <output>{prefs.maxTokens ? `${prefs.maxTokens} tokens` : defaults.maxTokens ? `${defaults.maxTokens} tokens (default)` : "No limit"}</output>
         </div>
       </Field>
 
@@ -1103,12 +1112,12 @@ function TunePanel({
           Advanced sampling <Icon name="chevronDown" size={14} />
         </summary>
         <div className="num-grid">
-          <NumberAuto label="Top P" value={prefs.topP} onChange={(v) => set({ topP: v })} step={0.05} min={0} max={1} />
-          <NumberAuto label="Presence penalty" value={prefs.presencePenalty} onChange={(v) => set({ presencePenalty: v })} step={0.1} min={-2} max={2} />
-          <NumberAuto label="Top K" value={prefs.topK} onChange={(v) => set({ topK: v === undefined ? undefined : Math.round(v) })} step={1} min={0} max={1000} />
-          <NumberAuto label="Min P" value={prefs.minP} onChange={(v) => set({ minP: v })} step={0.01} min={0} max={1} />
-          <NumberAuto label="Repeat penalty" value={prefs.repeatPenalty} onChange={(v) => set({ repeatPenalty: v })} step={0.05} min={0.5} max={2} />
-          <NumberAuto label="Seed" value={prefs.seed} onChange={(v) => set({ seed: v === undefined ? undefined : Math.round(v) })} step={1} min={-1} max={2 ** 31} />
+          <NumberAuto label="Top P" value={prefs.topP} fallback={defaults.topP} onChange={(v) => set({ topP: v })} step={0.05} min={0} max={1} />
+          <NumberAuto label="Presence penalty" value={prefs.presencePenalty} fallback={defaults.presencePenalty} onChange={(v) => set({ presencePenalty: v })} step={0.1} min={-2} max={2} />
+          <NumberAuto label="Top K" value={prefs.topK} fallback={defaults.topK} onChange={(v) => set({ topK: v === undefined ? undefined : Math.round(v) })} step={1} min={0} max={1000} />
+          <NumberAuto label="Min P" value={prefs.minP} fallback={defaults.minP} onChange={(v) => set({ minP: v })} step={0.01} min={0} max={1} />
+          <NumberAuto label="Repeat penalty" value={prefs.repeatPenalty} fallback={defaults.repeatPenalty} onChange={(v) => set({ repeatPenalty: v })} step={0.05} min={0.5} max={2} />
+          <NumberAuto label="Seed" value={prefs.seed} fallback={defaults.seed} onChange={(v) => set({ seed: v === undefined ? undefined : Math.round(v) })} step={1} min={-1} max={2 ** 31} />
         </div>
         {cloud && <p className="tune-note">Cloud models ignore Top K, Min P and Repeat penalty.</p>}
       </details>
@@ -1125,7 +1134,7 @@ function TunePanel({
 
       <div className="tune-foot">
         <button onClick={() => setPrefs({})}>Reset to defaults</button>
-        <small>Saved in this browser.</small>
+        <small>Saved in this browser. Admins set the defaults in Settings.</small>
       </div>
     </div>
   );

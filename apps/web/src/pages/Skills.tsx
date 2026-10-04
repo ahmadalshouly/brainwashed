@@ -97,7 +97,7 @@ export function SkillsPage() {
                 <span />
               </label>
               <div className="grow">
-                <strong>{s.name}</strong> {!s.enabled && <Badge>off</Badge>}
+                <strong>{s.name}</strong> {s.builtin && <Badge>built-in</Badge>} {!s.enabled && <Badge>off</Badge>}
                 <div className="muted small">{s.description}</div>
                 {s.triggers.length > 0 && (
                   <div className="tags">
@@ -110,15 +110,17 @@ export function SkillsPage() {
                 )}
               </div>
               <button onClick={() => edit(s.name)}>Edit</button>
-              <button
-                className="danger-text"
-                onClick={() => {
-                  if (confirm(`Delete the skill ${s.name}?`))
-                    action.run(async () => (await remote.deleteSkill(s.name), list.reload()));
-                }}
-              >
-                Delete
-              </button>
+              {!s.builtin && (
+                <button
+                  className="danger-text"
+                  onClick={() => {
+                    if (confirm(`Delete the skill ${s.name}?`))
+                      action.run(async () => (await remote.deleteSkill(s.name), list.reload()));
+                  }}
+                >
+                  Delete
+                </button>
+              )}
             </div>
           ))}
         </div>

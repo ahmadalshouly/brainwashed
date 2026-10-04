@@ -12,22 +12,65 @@ fn user(text: &str) -> ChatMessage {
 const RECIPE: &str = "---\nname: haiku\ndescription: Writes haiku poems.\ntriggers: [haiku]\n---\nUse 5-7-5 syllables.";
 
 #[test]
-fn bundled_skills_are_installed_on_first_run() {
+fn builtin_skills_are_always_installed() {
     let dir = tempfile::tempdir().unwrap();
+    let names = |e: &Engine| -> Vec<String> {
+        e.skills()
+            .skills
+            .into_iter()
+            .map(|s| s.entry.skill.name)
+            .collect()
+    };
+    let first = engine(dir.path());
+    assert_eq!(names(&first), ["document-analyst", "writing-assistant"]);
+    assert!(first.skills().skills.iter().all(|s| s.builtin));
+
+    // They can't be deleted, and come back if removed by hand.
+    assert!(first.delete_skill("writing-assistant").is_err());
+    std::fs::remove_dir_all(dir.path().join("skills/writing-assistant")).unwrap();
+    assert_eq!(
+        names(&engine(dir.path())),
+        ["document-analyst", "writing-assistant"]
+    );
+}
+
+#[test]
+fn old_example_skills_are_removed_unless_edited() {
+    let dir = tempfile::tempdir().unwrap();
+    let skills = dir.path().join("skills");
+    let old = "---\nname: meal-planner\ndescription: Plans weekly meals from ingredients on hand and dietary goals.\ntriggers: [meal plan, what should I cook, groceries]\nversion: 1\n---\n\nWhen the user asks for help planning meals:\n\n1. If they have not listed ingredients they already have, ask for them in one short question.\n2. Ask about dietary restrictions only if none were mentioned.\n3. Propose meals for the requested days as a short list: day, dish, main ingredients.\n4. End with a grocery list of only the items they still need to buy.\n\nKeep the answer under 200 words unless the user asks for recipes.\n";
+    std::fs::create_dir_all(skills.join("meal-planner")).unwrap();
+    std::fs::write(skills.join("meal-planner/SKILL.md"), old).unwrap();
+    let edited = "---\nname: explain-simply\ndescription: My own version.\n---\nMine.";
+    std::fs::create_dir_all(skills.join("explain-simply")).unwrap();
+    std::fs::write(skills.join("explain-simply/SKILL.md"), edited).unwrap();
+
     let names: Vec<String> = engine(dir.path())
         .skills()
         .skills
         .into_iter()
         .map(|s| s.entry.skill.name)
         .collect();
-    assert_eq!(names, ["email-writer", "explain-simply", "meal-planner"]);
+    assert_eq!(
+        names,
+        ["document-analyst", "explain-simply", "writing-assistant"]
+    );
 }
 
 #[test]
-fn deleted_bundled_skills_stay_deleted() {
+fn builtin_skills_are_upgraded_to_newer_versions() {
     let dir = tempfile::tempdir().unwrap();
-    engine(dir.path()).delete_skill("meal-planner").unwrap();
-    assert_eq!(engine(dir.path()).skills().skills.len(), 2);
+    let path = dir.path().join("skills/writing-assistant/SKILL.md");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        "---\nname: writing-assistant\ndescription: old\nversion: 0\n---\nold",
+    )
+    .unwrap();
+    engine(dir.path());
+    assert!(std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("Tone guide"));
 }
 
 #[test]
@@ -36,30 +79,46 @@ fn relevant_skill_is_added_to_the_prompt() {
     let engine = engine(dir.path());
     let (prompt, used) =
         engine.build_prompt(&[user("Draft an email to my boss asking for Friday off")]);
-    assert_eq!(used, ["email-writer"]);
+    assert_eq!(used, ["writing-assistant"]);
     let system = &prompt[0].content;
     assert!(
-        system.contains("- meal-planner: "),
+        system.contains("- document-analyst: "),
         "index lists every enabled skill"
     );
-    assert!(system.contains("## Skill: email-writer"));
-    assert!(!system.contains("## Skill: meal-planner"));
+    assert!(system.contains("## Skill: writing-assistant"));
+    assert!(!system.contains("## Skill: document-analyst"));
+}
+
+#[test]
+fn an_attached_document_brings_in_the_document_skill() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut message = user("What are the payment terms?");
+    message
+        .attachments
+        .push(brainwashed_core::Attachment::File {
+            name: "lease.pdf".into(),
+            text: "Rent is due on the first of each month.".into(),
+        });
+    let (_, used) = engine(dir.path()).build_prompt(&[message]);
+    assert_eq!(used, ["document-analyst"]);
 }
 
 #[test]
 fn disabled_skills_are_ignored() {
     let dir = tempfile::tempdir().unwrap();
     let engine = engine(dir.path());
-    engine.set_skill_enabled("email-writer", false).unwrap();
+    engine
+        .set_skill_enabled("writing-assistant", false)
+        .unwrap();
     let (prompt, used) = engine.build_prompt(&[user("Draft an email to my boss")]);
     assert!(used.is_empty());
-    assert!(!prompt[0].content.contains("email-writer"));
+    assert!(!prompt[0].content.contains("writing-assistant"));
     assert!(
         !engine
             .skills()
             .skills
             .iter()
-            .find(|s| s.entry.skill.name == "email-writer")
+            .find(|s| s.entry.skill.name == "writing-assistant")
             .unwrap()
             .enabled
     );
@@ -125,7 +184,7 @@ fn broken_skills_are_reported() {
     engine.reload_skills(true);
     let list = engine.skills();
     assert_eq!(list.errors.len(), 1);
-    assert_eq!(list.skills.len(), 3);
+    assert_eq!(list.skills.len(), 2);
 }
 
 #[test]

@@ -116,6 +116,8 @@ export interface SkillInfo extends SkillSummary {
   triggers: string[];
   version: number;
   path: string;
+  /** Ships with BrainWashed: it can be turned off but not deleted. */
+  builtin?: boolean;
 }
 
 export interface SkillList {
@@ -249,6 +251,8 @@ export interface HostSettings {
   public_url: string | null;
   cloudflared_path: string | null;
   check_for_updates: boolean;
+  /** Model settings for every chat, from every device. A chat's own options win. */
+  chat_defaults: ChatOptions;
 }
 
 export interface Hardware {
