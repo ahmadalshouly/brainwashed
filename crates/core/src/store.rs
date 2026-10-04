@@ -12,6 +12,9 @@ pub struct InstalledModel {
     pub repo: Option<String>,
     pub path: PathBuf,
     pub size: u64,
+    /// Vision projector, for models that can look at pictures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmproj: Option<PathBuf>,
 }
 
 /// The llama.cpp build currently installed.

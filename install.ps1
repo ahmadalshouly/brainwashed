@@ -13,13 +13,16 @@ $ProgressPreference = "SilentlyContinue"   # Invoke-WebRequest is very slow with
 $repo = "ahmadalshouly/brainwashed"
 $asset = "brainwashed-x86_64-pc-windows-msvc.zip"   # Also runs on Windows on Arm through emulation.
 $dir = Join-Path $env:LOCALAPPDATA "Programs\BrainWashed"
+# GitHub allows few anonymous API calls per address; a token lifts that (CI sets one).
+$headers = @{}
+if ($env:GITHUB_TOKEN) { $headers.Authorization = "Bearer $($env:GITHUB_TOKEN)" }
 
 if ($env:BRAINWASHED_VERSION) {
-    $release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/tags/$($env:BRAINWASHED_VERSION)"
+    $release = Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases/tags/$($env:BRAINWASHED_VERSION)"
 } else {
     # Assign first: Windows PowerShell 5.1 passes a JSON array down the
     # pipeline as one object instead of one release at a time.
-    $releases = Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=20"
+    $releases = Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases?per_page=20"
     $release = $releases |
         Where-Object { -not $_.draft -and ($_.assets.name -contains $asset) } |
         Select-Object -First 1

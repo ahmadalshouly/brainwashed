@@ -6,7 +6,7 @@ use crate::tunnel::{Tunnel, TunnelOptions, TunnelSpec, TunnelStatus};
 use crate::{Error, Result};
 use axum::{
     body::Body,
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -27,6 +27,9 @@ const PROTOCOL_VERSION: u32 = 1;
 const OFFER_TTL: Duration = Duration::from_secs(10 * 60);
 /// Requests whose clock differs from ours by more than this are refused.
 const MAX_CLOCK_SKEW_MS: u64 = 5 * 60 * 1000;
+/// Largest encrypted call. Pictures and documents travel base64 encoded
+/// inside the encrypted envelope, which is base64 encoded again.
+pub const MAX_RPC_BODY: usize = 48 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -464,7 +467,8 @@ impl Gateway {
         Router::new()
             .route("/hello", get(hello))
             .route("/pair", post(pair))
-            .route("/rpc", post(rpc))
+            // Room for pictures and documents attached to a chat.
+            .route("/rpc", post(rpc).layer(DefaultBodyLimit::max(MAX_RPC_BODY)))
             .route("/control/status", get(crate::control::status))
             .route("/control/admin-link", post(crate::control::admin_link))
             .route("/control/stop", post(crate::control::stop))
@@ -732,7 +736,8 @@ async fn rpc(State(gw): State<Gateway>, Json(req): Json<RpcRequest>) -> Response
     gw.inner.devices.touch(&device.id, now_secs());
 
     if call.method == "chat" {
-        return chat(gw, device_key, call.params);
+        let admin = device.role == DeviceRole::Admin;
+        return chat(gw, device_key, admin, call.params);
     }
     let result = crate::admin::handle(&gw, &device, &call.method, call.params).await;
     let body = match result {
@@ -744,19 +749,31 @@ async fn rpc(State(gw): State<Gateway>, Json(req): Json<RpcRequest>) -> Response
 
 /// One encrypted JSON frame per line: `{"event":…}` while streaming, then
 /// `{"done":"full answer"}` or `{"error":"…"}`.
-fn chat(gw: Gateway, device_key: crypto_box::PublicKey, params: Value) -> Response {
+fn chat(gw: Gateway, device_key: crypto_box::PublicKey, admin: bool, params: Value) -> Response {
     let messages: Vec<ChatMessage> = match serde_json::from_value(params["messages"].clone()) {
         Ok(m) => m,
         Err(e) => return reject(StatusCode::BAD_REQUEST, &format!("bad messages: {e}")),
     };
+    let options: SamplingOptions = if params["options"].is_null() {
+        SamplingOptions::default()
+    } else {
+        match serde_json::from_value(params["options"].clone()) {
+            Ok(o) => o,
+            Err(e) => return reject(StatusCode::BAD_REQUEST, &format!("bad options: {e}")),
+        }
+    };
+    // `local` or `<provider>/<model>`; the local model when left out.
+    let model = params["model"].as_str().map(str::to_string);
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
     let engine = gw.inner.engine.clone();
     tokio::spawn(async move {
         let events = tx.clone();
         let result = engine
-            .chat(
+            .chat_with(
                 &messages,
-                &SamplingOptions::default(),
+                &options,
+                model.as_deref(),
+                admin,
                 move |e: ChatEvent| {
                     let _ = events.send(json!({ "event": e }));
                 },

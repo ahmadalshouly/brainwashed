@@ -12,6 +12,9 @@ pub struct CatalogEntry {
     /// Parameter count in billions, used to match models to hardware.
     pub params_b: f32,
     pub license: String,
+    /// Comes with a vision projector, so it can look at pictures.
+    #[serde(default)]
+    pub vision: bool,
 }
 
 /// Models offered in the picker. Any other GGUF repo can be added by name.
@@ -57,12 +60,19 @@ struct Lfs {
     size: u64,
 }
 
+/// A model file and, for models that can see pictures, its vision projector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelFiles {
+    pub model: ModelFile,
+    pub projector: Option<ModelFile>,
+}
+
 pub async fn resolve(
     client: &reqwest::Client,
     hf_base: &str,
     repo: &str,
     quant: Option<&str>,
-) -> Result<ModelFile> {
+) -> Result<ModelFiles> {
     let url = format!("{hf_base}/api/models/{repo}/tree/main");
     let body = client
         .get(url)
@@ -71,7 +81,40 @@ pub async fn resolve(
         .error_for_status()?
         .text()
         .await?;
-    pick_file(repo, &body, quant)
+    Ok(ModelFiles {
+        model: pick_file(repo, &body, quant)?,
+        projector: pick_projector(repo, &body)?,
+    })
+}
+
+/// Projector precision in order of preference: full quality first, since
+/// projectors are small and quantizing them hurts more.
+const PREFERRED_PROJECTORS: &[&str] = &["f16", "bf16", "q8_0", "f32"];
+
+/// Chooses the vision projector (`mmproj`) in a repo listing, if it has one.
+pub fn pick_projector(repo: &str, tree_json: &str) -> Result<Option<ModelFile>> {
+    let entries: Vec<TreeEntry> = serde_json::from_str(tree_json)?;
+    let projectors: Vec<&TreeEntry> = entries
+        .iter()
+        .filter(|e| {
+            let lower = e.path.to_ascii_lowercase();
+            e.kind == "file" && lower.ends_with(".gguf") && lower.contains("mmproj")
+        })
+        .collect();
+    let chosen = PREFERRED_PROJECTORS
+        .iter()
+        .find_map(|p| {
+            projectors
+                .iter()
+                .find(|e| e.path.to_ascii_lowercase().contains(p))
+        })
+        .or(projectors.first());
+    Ok(chosen.map(|e| ModelFile {
+        repo: repo.to_string(),
+        file: e.path.clone(),
+        size: e.lfs.as_ref().map_or(e.size, |l| l.size),
+        sha256: e.lfs.as_ref().map(|l| l.oid.clone()),
+    }))
 }
 
 /// Chooses a single-file GGUF from a repo listing, preferring `quant` if given.
@@ -146,6 +189,22 @@ mod tests {
             "Model-Q8_0.gguf"
         );
         assert!(pick_file("me/model", TREE, Some("Q2_K")).is_err());
+    }
+
+    #[test]
+    fn finds_the_vision_projector() {
+        let p = pick_projector("me/model", TREE).unwrap().unwrap();
+        assert_eq!(p.file, "mmproj-Model-Q4_K_M.gguf");
+        assert_eq!(p.size, 500);
+        let tree = r#"[
+          {"type":"file","path":"mmproj-Q8_0.gguf","size":10},
+          {"type":"file","path":"mmproj-F16.gguf","size":20}
+        ]"#;
+        assert_eq!(
+            pick_projector("me/model", tree).unwrap().unwrap().file,
+            "mmproj-F16.gguf"
+        );
+        assert_eq!(pick_projector("me/model", "[]").unwrap(), None);
     }
 
     #[test]

@@ -7,7 +7,7 @@ use brainwashed_runtime::{
     chat::{self, SamplingOptions},
     download,
     llama::{self, LlamaServer, ServerOptions},
-    release, ChatMessage, Hardware,
+    release, Attachment, ChatMessage, Hardware, Role,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -110,7 +110,7 @@ pub struct Engine {
 
 pub(crate) struct Inner {
     config: EngineConfig,
-    client: reqwest::Client,
+    pub(crate) client: reqwest::Client,
     /// Talks to llama-server on localhost, bypassing any system proxy.
     local: reqwest::Client,
     hardware: Hardware,
@@ -121,6 +121,8 @@ pub(crate) struct Inner {
     base_url: RwLock<Option<String>>,
     /// Context size of the loaded model as llama-server reports it.
     pub(crate) loaded_context: RwLock<Option<u32>>,
+    /// The loaded model can look at pictures.
+    vision: RwLock<bool>,
     pub(crate) events: broadcast::Sender<Event>,
     pub(crate) skills: RwLock<SkillState>,
 }
@@ -152,6 +154,7 @@ impl Engine {
                 server: Mutex::new(None),
                 base_url: RwLock::new(None),
                 loaded_context: RwLock::new(None),
+                vision: RwLock::new(false),
                 events: broadcast::channel(256).0,
                 skills: RwLock::new(skills),
                 config,
@@ -311,30 +314,50 @@ impl Engine {
             )));
         }
         let cfg = &self.inner.config;
-        let file = catalog::resolve(&self.inner.client, &cfg.hf_base, repo, quant).await?;
-        let file_name = Path::new(&file.file)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| Error::Invalid(format!("bad file name {}", file.file)))?
-            .to_string();
-        let dest = store::dir_for_repo(&self.models_dir(), repo).join(&file_name);
+        let files = catalog::resolve(&self.inner.client, &cfg.hf_base, repo, quant).await?;
+        let dir = store::dir_for_repo(&self.models_dir(), repo);
+        let file_name = file_name(&files.model.file)?;
+        let dest = dir.join(&file_name);
+        let total = files.model.size + files.projector.as_ref().map_or(0, |p| p.size);
 
-        let events = self.inner.events.clone();
-        let repo_owned = repo.to_string();
-        download::download(
-            &self.inner.client,
-            &file.url(&cfg.hf_base),
-            &dest,
-            file.sha256.as_deref(),
-            &move |done, total| {
-                let _ = events.send(Event::DownloadProgress {
-                    repo: repo_owned.clone(),
-                    done,
-                    total,
-                });
-            },
-        )
-        .await?;
+        // Progress covers the model and its projector together.
+        let fetch = |file: catalog::ModelFile, dest: PathBuf, offset: u64| {
+            let events = self.inner.events.clone();
+            let repo = repo.to_string();
+            async move {
+                // Downloading again only fetches what's missing, such as the
+                // projector of a model installed before pictures worked.
+                let have = tokio::fs::metadata(&dest).await.map(|m| m.len()).ok();
+                if have == Some(file.size) && file.size > 0 {
+                    return Ok::<_, Error>(());
+                }
+                download::download(
+                    &self.inner.client,
+                    &file.url(&cfg.hf_base),
+                    &dest,
+                    file.sha256.as_deref(),
+                    &move |done, _| {
+                        let _ = events.send(Event::DownloadProgress {
+                            repo: repo.clone(),
+                            done: offset + done,
+                            total: Some(total),
+                        });
+                    },
+                )
+                .await?;
+                Ok(())
+            }
+        };
+        let model_size = files.model.size;
+        fetch(files.model.clone(), dest.clone(), 0).await?;
+        let mmproj = match files.projector {
+            Some(projector) => {
+                let path = dir.join(file_name_of(&projector)?);
+                fetch(projector, path.clone(), model_size).await?;
+                Some(path)
+            }
+            None => None,
+        };
 
         let model = InstalledModel {
             id: store::model_id(&file_name),
@@ -342,6 +365,7 @@ impl Engine {
             repo: Some(repo.to_string()),
             size: std::fs::metadata(&dest)?.len(),
             path: dest,
+            mmproj,
         };
         let mut models = self.models();
         models.retain(|m| m.id != model.id);
@@ -363,6 +387,7 @@ impl Engine {
             repo: None,
             size: std::fs::metadata(path)?.len(),
             path: path.to_path_buf(),
+            mmproj: None,
         };
         let mut models = self.models();
         models.retain(|m| m.id != model.id);
@@ -382,6 +407,13 @@ impl Engine {
             let model = models.remove(pos);
             if model.path.starts_with(self.models_dir()) {
                 let _ = tokio::fs::remove_file(&model.path).await;
+                if let Some(mmproj) = &model.mmproj {
+                    // Other quantizations of the same repo share the projector.
+                    let shared = models.iter().any(|m| m.mmproj.as_ref() == Some(mmproj));
+                    if !shared {
+                        let _ = tokio::fs::remove_file(mmproj).await;
+                    }
+                }
             }
             self.save_models(models)?;
         }
@@ -465,6 +497,7 @@ impl Engine {
         let mut server = self.inner.server.lock().await;
         if let Some(old) = server.take() {
             *self.inner.base_url.write().unwrap() = None;
+            *self.inner.vision.write().unwrap() = false;
             let _ = old.stop().await;
         }
 
@@ -477,6 +510,7 @@ impl Engine {
             let opts = ServerOptions {
                 binary,
                 model: model.path.clone(),
+                mmproj: model.mmproj.clone().filter(|p| p.exists()),
                 context_size: settings.context_size,
                 gpu_layers: settings.gpu_layers,
                 port: None,
@@ -495,6 +529,8 @@ impl Engine {
                 }
                 *self.inner.base_url.write().unwrap() = Some(started.base_url());
                 *self.inner.loaded_context.write().unwrap() = started.context_size();
+                *self.inner.vision.write().unwrap() =
+                    model.mmproj.as_ref().is_some_and(|p| p.exists());
                 *server = Some(started);
                 self.edit_settings(|s| s.active_model = Some(model.id.clone()))?;
                 self.set_state(EngineState::Ready { model: model.id });
@@ -512,6 +548,7 @@ impl Engine {
     pub async fn unload(&self) -> Result<()> {
         let mut server = self.inner.server.lock().await;
         *self.inner.base_url.write().unwrap() = None;
+        *self.inner.vision.write().unwrap() = false;
         if let Some(old) = server.take() {
             old.stop().await.map_err(Error::from)?;
         }
@@ -532,30 +569,128 @@ impl Engine {
 
     // ----- chat -----
 
-    /// Streams the model's reply to `conversation`. The first event names the
-    /// skills used; the rest are pieces of the answer. Returns the full answer.
+    /// Streams the local model's reply to `conversation`. The first event
+    /// names the skills used; the rest are pieces of the answer, then stats.
+    /// Returns the full answer.
     pub async fn chat(
         &self,
         conversation: &[ChatMessage],
         sampling: &SamplingOptions,
+        on_event: impl FnMut(ChatEvent),
+    ) -> Result<String> {
+        self.chat_with(conversation, sampling, None, true, on_event)
+            .await
+    }
+
+    /// Like [`Engine::chat`], with the model picked by id: `local` (or None)
+    /// for the model on this computer, `<provider>/<model>` for a cloud
+    /// provider. `admin` decides which provider models are allowed.
+    pub async fn chat_with(
+        &self,
+        conversation: &[ChatMessage],
+        sampling: &SamplingOptions,
+        model: Option<&str>,
+        admin: bool,
         mut on_event: impl FnMut(ChatEvent),
     ) -> Result<String> {
-        let base_url = self
-            .inner
-            .base_url
-            .read()
-            .unwrap()
-            .clone()
-            .ok_or_else(|| Error::Invalid("no model is loaded yet".into()))?;
-        let (prompt, skills) = self.build_prompt(conversation);
+        sampling
+            .validate()
+            .map_err(|e| Error::Invalid(e.to_string()))?;
+        check_attachments(conversation)?;
+        let (endpoint, vision, context) =
+            match model.filter(|m| *m != crate::providers::LOCAL_MODEL) {
+                Some(id) => (
+                    self.provider_endpoint(id, admin)?,
+                    true,
+                    Some(CLOUD_CONTEXT),
+                ),
+                None => {
+                    let base_url = self
+                        .inner
+                        .base_url
+                        .read()
+                        .unwrap()
+                        .clone()
+                        .ok_or_else(|| Error::Invalid("no model is loaded yet".into()))?;
+                    (chat::Endpoint::llama(base_url), self.vision(), None)
+                }
+            };
+        let asks_about_pictures = conversation
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User)
+            .is_some_and(|m| m.images().next().is_some());
+        if asks_about_pictures && !vision {
+            return Err(Error::Invalid(
+                "This model can't see pictures. Switch to a model that can, like Gemma 3 4B or Qwen2.5 VL 3B, or ask an admin to download one.".into(),
+            ));
+        }
+        let (prompt, skills) = self.build_prompt_with(conversation, context);
         on_event(ChatEvent::Skills { names: skills });
+        let client = if endpoint.llama {
+            &self.inner.local
+        } else {
+            &self.inner.client
+        };
         Ok(
-            chat::stream_chat(&self.inner.local, &base_url, &prompt, sampling, |d| {
+            chat::stream_chat(client, &endpoint, &prompt, sampling, vision, |d| {
                 on_event(d.into())
             })
             .await?,
         )
     }
+
+    /// Whether the loaded model can look at pictures.
+    pub fn vision(&self) -> bool {
+        *self.inner.vision.read().unwrap()
+    }
+}
+
+/// Context assumed for cloud models when trimming long conversations. Most
+/// offer far more; this keeps requests and bills reasonable.
+const CLOUD_CONTEXT: u32 = 64_000;
+
+const IMAGE_TYPES: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/bmp",
+];
+
+/// Pictures must be base64 in a format llama.cpp reads, since they go into a
+/// data URL.
+fn check_attachments(conversation: &[ChatMessage]) -> Result<()> {
+    for m in conversation {
+        for a in &m.attachments {
+            if let Attachment::Image { name, mime, data } = a {
+                if !IMAGE_TYPES.contains(&mime.as_str()) {
+                    return Err(Error::Invalid(format!(
+                        "{name} is a {mime}. Attach PNG, JPEG, WebP or GIF pictures."
+                    )));
+                }
+                let base64 = data
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='));
+                if !base64 || data.is_empty() {
+                    return Err(Error::Invalid(format!("{name} is not a valid picture.")));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn file_name(path: &str) -> Result<String> {
+    Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string)
+        .ok_or_else(|| Error::Invalid(format!("bad file name {path}")))
+}
+
+fn file_name_of(file: &catalog::ModelFile) -> Result<String> {
+    file_name(&file.file)
 }
 
 fn pid_file(data_dir: &Path) -> PathBuf {

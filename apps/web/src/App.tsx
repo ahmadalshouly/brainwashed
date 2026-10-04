@@ -9,10 +9,12 @@ import {
   type PairedHost,
 } from "@brainwashed/api";
 import { ACCENTS, loadHost, loadLook, loadPage, saveChats, saveHost, saveLook, savePage, type Look } from "./storage";
+import { clearConversations } from "./chatstore";
 import { errorText, HostContext, stateText, type HostContextValue } from "./ui";
 import { ChatPage } from "./pages/Chat";
 import { OverviewPage } from "./pages/Overview";
 import { ModelsPage } from "./pages/Models";
+import { ProvidersPage } from "./pages/Providers";
 import { SkillsPage } from "./pages/Skills";
 import { DevicesPage } from "./pages/Devices";
 import { RemotePage } from "./pages/Remote";
@@ -84,6 +86,7 @@ export function App() {
   const forget = useCallback((why?: string) => {
     saveHost(null);
     saveChats([]);
+    clearConversations();
     setHost(null);
     setNotice(why ?? null);
   }, []);
@@ -119,6 +122,7 @@ export function App() {
         const h = await pairFromLink(link);
         saveHost(h);
         saveChats([]);
+        clearConversations();
         setHost(h);
         setNotice(null);
       } catch (e) {
@@ -181,9 +185,15 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { id: "chat", label: "Chat", icon: "M4 5h16v11H8l-4 4z", admin: false },
+  { id: "chat", label: "Back to chat", icon: "M19 12H5M12 5l-7 7 7 7", admin: false },
   { id: "overview", label: "Overview", icon: "M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z", admin: true },
   { id: "models", label: "Models", icon: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5", admin: true },
+  {
+    id: "providers",
+    label: "Cloud models",
+    icon: "M7 18h10a4 4 0 00.5-8 6 6 0 00-11.4-1.5A4.5 4.5 0 007 18z",
+    admin: true,
+  },
   { id: "skills", label: "Skills", icon: "M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h7", admin: true },
   { id: "devices", label: "Devices", icon: "M7 2h10v20H7zM11 18h2", admin: true },
   {
@@ -224,10 +234,7 @@ function Shell({
   const [role, setRole] = useState<DeviceRole>(paired.role ?? "member");
   const [state, setState] = useState<EngineState | null>(null);
   const [offline, setOffline] = useState<string | null>(null);
-  const [page, setPage] = useState<string>(() => {
-    const saved = loadPage();
-    return saved ?? (paired.role === "admin" ? "overview" : "chat");
-  });
+  const [page, setPage] = useState<string>(() => loadPage() ?? "chat");
   const [navOpen, setNavOpen] = useState(false);
   const [prefs, setPrefs] = useState(false);
 
@@ -291,6 +298,15 @@ function Shell({
   const ctx: HostContextValue = { remote, paired, role, state, refreshState, fail, go };
   const ready = state?.state === "ready";
 
+  if (current === "chat") {
+    return (
+      <HostContext.Provider value={ctx}>
+        {offline && <div className="offline-toast">Can't reach {paired.hostName}: {offline}</div>}
+        <ChatPage look={look} setLook={setLook} onForget={() => onForget()} onManage={(p) => go(p ?? (role === "admin" ? "overview" : "chat"))} />
+      </HostContext.Provider>
+    );
+  }
+
   return (
     <HostContext.Provider value={ctx}>
       <div className={`shell ${navOpen ? "nav-open" : ""}`}>
@@ -306,7 +322,7 @@ function Shell({
           </div>
           <nav>
             {items.map((n) => (
-              <button key={n.id} className={current === n.id ? "active" : ""} onClick={() => go(n.id)}>
+              <button key={n.id} className={n.id === "chat" ? "back-to-chat" : current === n.id ? "active" : ""} onClick={() => go(n.id)}>
                 <Icon d={n.icon} />
                 {n.label}
               </button>
@@ -361,9 +377,9 @@ function Shell({
             <strong>{items.find((n) => n.id === current)?.label}</strong>
           </div>
           {offline && <div className="banner error inset">Can't reach your computer: {offline}</div>}
-          {current === "chat" && <ChatPage />}
           {current === "overview" && <OverviewPage />}
           {current === "models" && <ModelsPage />}
+          {current === "providers" && <ProvidersPage />}
           {current === "skills" && <SkillsPage />}
           {current === "devices" && <DevicesPage />}
           {current === "remote" && <RemotePage />}

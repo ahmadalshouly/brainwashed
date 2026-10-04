@@ -4,7 +4,7 @@
 use crate::engine::Event;
 use crate::{Engine, Error, Result};
 use brainwashed_runtime::chat::Delta;
-use brainwashed_runtime::{ChatMessage, Role};
+use brainwashed_runtime::{ChatMessage, ReplyStats, Role};
 use brainwashed_skills::{fingerprint, LoadError, Registry, Router, SkillEntry, SKILL_FILE};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -31,7 +31,7 @@ const BUNDLED: &[(&str, &str)] = &[
 ];
 
 /// What the UI and phones see while a reply streams.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum ChatEvent {
     /// Skills added to the prompt for this reply. Always sent first.
@@ -44,6 +44,8 @@ pub enum ChatEvent {
     Reasoning {
         text: String,
     },
+    /// Sent once, after the answer.
+    Stats(ReplyStats),
 }
 
 impl From<Delta> for ChatEvent {
@@ -51,6 +53,7 @@ impl From<Delta> for ChatEvent {
         match d {
             Delta::Content(text) => ChatEvent::Content { text },
             Delta::Reasoning(text) => ChatEvent::Reasoning { text },
+            Delta::Stats(stats) => ChatEvent::Stats(stats),
         }
     }
 }
@@ -209,6 +212,15 @@ impl Engine {
 
     /// Builds the prompt the model actually sees, and names the skills used.
     pub fn build_prompt(&self, conversation: &[ChatMessage]) -> (Vec<ChatMessage>, Vec<String>) {
+        self.build_prompt_with(conversation, None)
+    }
+
+    /// `context` overrides the local model's context size, for cloud models.
+    pub(crate) fn build_prompt_with(
+        &self,
+        conversation: &[ChatMessage],
+        context: Option<u32>,
+    ) -> (Vec<ChatMessage>, Vec<String>) {
         let settings = self.settings();
         let mut system = settings.system_prompt;
 
@@ -251,12 +263,13 @@ impl Engine {
                 messages.push(m.clone());
             }
         }
-        let context = self
-            .inner
-            .loaded_context
-            .read()
-            .unwrap()
-            .map_or(settings.context_size, |n| n.min(settings.context_size));
+        let context = context.unwrap_or_else(|| {
+            self.inner
+                .loaded_context
+                .read()
+                .unwrap()
+                .map_or(settings.context_size, |n| n.min(settings.context_size))
+        });
         fit_to_context(&mut messages, &system, context);
         messages.insert(0, ChatMessage::new(Role::System, system));
         (messages, used)
@@ -269,19 +282,23 @@ fn estimate_tokens(text: &str) -> usize {
     text.chars().count() / 3 + 4
 }
 
+/// Tokens a picture takes. Vision projectors use 256 to about 1000.
+const IMAGE_TOKENS: usize = 768;
+
+fn message_tokens(m: &ChatMessage) -> usize {
+    estimate_tokens(&m.text()) + m.images().count() * IMAGE_TOKENS
+}
+
 /// Drops the oldest turns until the prompt leaves room for a reply. The
 /// latest message is always kept.
 fn fit_to_context(messages: &mut Vec<ChatMessage>, system: &str, context_size: u32) {
     let reply_reserve = (context_size as usize / 4).max(256);
     let budget = (context_size as usize).saturating_sub(reply_reserve);
-    let mut total: usize = estimate_tokens(system)
-        + messages
-            .iter()
-            .map(|m| estimate_tokens(&m.content))
-            .sum::<usize>();
+    let mut total: usize =
+        estimate_tokens(system) + messages.iter().map(message_tokens).sum::<usize>();
     while total > budget && messages.len() > 1 {
         let dropped = messages.remove(0);
-        total -= estimate_tokens(&dropped.content);
+        total -= message_tokens(&dropped);
     }
     // Chat templates expect the conversation to start with the user.
     while messages.len() > 1 && messages[0].role != Role::User {

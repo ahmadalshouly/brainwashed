@@ -1,10 +1,16 @@
 use axum::{extract::Path as UrlPath, routing::get, Json, Router};
 use brainwashed_core::{
-    Backend, ChatMessage, Engine, EngineConfig, EngineState, Role, SamplingOptions,
+    Attachment, Backend, ChatMessage, Engine, EngineConfig, EngineState, Role, SamplingOptions,
 };
 use std::time::Duration;
 
 const MODEL_BYTES: &[u8] = b"GGUF-not-really";
+const PROJECTOR_BYTES: &[u8] = b"GGUF-projector";
+
+/// `repo/file` for each file the fake Hugging Face served, across tests in
+/// this file (they run in parallel).
+static FETCHED: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<Vec<String>>>> =
+    std::sync::OnceLock::new();
 
 async fn serve(app: Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -16,23 +22,39 @@ async fn serve(app: Router) -> String {
 /// A fake Hugging Face serving one repo, plus a fake GitHub release whose
 /// llama.cpp "build" is a zip made by the test.
 async fn fake_services(model: Vec<u8>, runtime_zip: Vec<u8>) -> String {
-    let tree = serde_json::json!([
-        {"type": "file", "path": "Tiny-Q4_K_M.gguf", "size": model.len()},
-        {"type": "file", "path": "Tiny-Q8_0.gguf", "size": 1}
-    ]);
+    let size = model.len();
+    let fetched = FETCHED.get_or_init(Default::default).clone();
     let app = Router::new()
         .route(
             "/api/models/{owner}/{repo}/tree/main",
-            get(move || async move { Json(tree) }),
+            // Only `-VL-` repos come with a vision projector, so the real
+            // llama-server in the end-to-end test isn't handed a fake one.
+            get(
+                move |UrlPath((_, repo)): UrlPath<(String, String)>| async move {
+                    let mut tree = vec![
+                        serde_json::json!({"type": "file", "path": "Tiny-Q4_K_M.gguf", "size": size}),
+                        serde_json::json!({"type": "file", "path": "Tiny-Q8_0.gguf", "size": 1}),
+                    ];
+                    if repo.contains("-VL-") {
+                        tree.push(serde_json::json!({"type": "file", "path": "mmproj-Tiny-F16.gguf", "size": PROJECTOR_BYTES.len()}));
+                    }
+                    Json(tree)
+                },
+            ),
         )
         .route(
             "/{owner}/{repo}/resolve/main/{file}",
             get(
-                move |UrlPath((_, _, file)): UrlPath<(String, String, String)>| {
+                move |UrlPath((_, repo, file)): UrlPath<(String, String, String)>| {
                     let model = model.clone();
+                    let fetched = fetched.clone();
                     async move {
-                        assert_eq!(file, "Tiny-Q4_K_M.gguf");
-                        model
+                        fetched.lock().unwrap().push(format!("{repo}/{file}"));
+                        match file.as_str() {
+                            "Tiny-Q4_K_M.gguf" => model,
+                            "mmproj-Tiny-F16.gguf" => PROJECTOR_BYTES.to_vec(),
+                            other => panic!("unexpected download {other}"),
+                        }
                     }
                 },
             ),
@@ -68,10 +90,39 @@ async fn downloads_lists_and_deletes_models() {
     let engine = engine(dir.path(), &services);
     let mut events = engine.subscribe();
 
-    let model = engine.download_model("acme/Tiny-GGUF", None).await.unwrap();
+    let model = engine
+        .download_model("acme/Tiny-VL-GGUF", None)
+        .await
+        .unwrap();
     assert_eq!(model.id, "Tiny-Q4_K_M");
     assert_eq!(std::fs::read(&model.path).unwrap(), MODEL_BYTES);
+    // The vision projector comes along.
+    let mmproj = model.mmproj.clone().unwrap();
+    assert_eq!(std::fs::read(&mmproj).unwrap(), PROJECTOR_BYTES);
     assert_eq!(engine.models(), vec![model.clone()]);
+
+    // Downloading again fetches only what's missing.
+    std::fs::remove_file(&mmproj).unwrap();
+    let mine = || {
+        FETCHED
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|f| f.starts_with("Tiny-VL-GGUF/"))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let before = mine().len();
+    engine
+        .download_model("acme/Tiny-VL-GGUF", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        mine()[before..],
+        ["Tiny-VL-GGUF/mmproj-Tiny-F16.gguf".to_string()]
+    );
 
     let mut saw_progress = false;
     while let Ok(ev) = events.try_recv() {
@@ -86,6 +137,7 @@ async fn downloads_lists_and_deletes_models() {
     engine.delete_model(&model.id).await.unwrap();
     assert!(engine.models().is_empty());
     assert!(!model.path.exists());
+    assert!(!mmproj.exists());
 }
 
 #[tokio::test]
@@ -109,6 +161,33 @@ async fn chat_needs_a_loaded_model() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("no model"));
+}
+
+#[tokio::test]
+async fn chat_checks_options_and_pictures() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = engine(dir.path(), "http://127.0.0.1:9|http://127.0.0.1:9");
+    let hot = SamplingOptions {
+        temperature: Some(5.0),
+        ..Default::default()
+    };
+    let err = engine
+        .chat(&[ChatMessage::new(Role::User, "hi")], &hot, |_| {})
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("temperature"), "{err}");
+
+    let mut message = ChatMessage::new(Role::User, "what's this?");
+    message.attachments.push(Attachment::Image {
+        name: "x.svg".into(),
+        mime: "image/svg+xml".into(),
+        data: "PHN2Zz4=".into(),
+    });
+    let err = engine
+        .chat(&[message], &SamplingOptions::default(), |_| {})
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("PNG, JPEG"), "{err}");
 }
 
 #[test]

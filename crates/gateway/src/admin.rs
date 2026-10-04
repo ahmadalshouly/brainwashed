@@ -6,11 +6,19 @@
 use crate::devices::{Device, DeviceRole};
 use crate::relay;
 use crate::server::{download_entry, Gateway};
-use brainwashed_core::Settings;
+use brainwashed_core::{Provider, ProviderInfo, Settings};
 use serde_json::{json, Value};
 
 /// Calls any paired device may make.
-const MEMBER_METHODS: &[&str] = &["info", "state", "models", "skills", "whoami"];
+const MEMBER_METHODS: &[&str] = &[
+    "info",
+    "state",
+    "models",
+    "skills",
+    "whoami",
+    "readDocument",
+    "chatModels",
+];
 
 /// Calls that change something, recorded in the audit log.
 const AUDITED: &[&str] = &[
@@ -26,6 +34,8 @@ const AUDITED: &[&str] = &[
     "removeDevice",
     "setDeviceRole",
     "renameDevice",
+    "saveProvider",
+    "deleteProvider",
 ];
 
 type CallResult = Result<Value, String>;
@@ -56,7 +66,7 @@ pub(crate) async fn handle(
     }
     let target = ["id", "name", "repo", "role"]
         .iter()
-        .find_map(|k| params[*k].as_str())
+        .find_map(|k| params[*k].as_str().or(params["provider"][*k].as_str()))
         .map(str::to_string);
     let result = call(gw, device, method, params).await;
     if AUDITED.contains(&method) {
@@ -84,6 +94,28 @@ async fn call(gw: &Gateway, device: &Device, method: &str, params: Value) -> Cal
             "name": device.name,
             "role": device.role,
         })),
+
+        "chatModels" => to_json(engine.chat_models(device.role == DeviceRole::Admin)),
+        "readDocument" => {
+            use base64::Engine as _;
+            let name = str_param(&params, "name")?.to_string();
+            let data = str_param(&params, "data")?;
+            if data.len() > brainwashed_core::MAX_DOCUMENT_BYTES / 3 * 4 + 4 {
+                return Err(format!(
+                    "{name} is too big. Attach files up to {} MB.",
+                    brainwashed_core::MAX_DOCUMENT_BYTES / 1024 / 1024
+                ));
+            }
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .map_err(|_| "the file didn't arrive intact".to_string())?;
+            // PDFs can take a moment; keep it off the async threads.
+            tokio::task::spawn_blocking(move || brainwashed_core::read_document(&name, &bytes))
+                .await
+                .map_err(|_| "reading the file failed".to_string())?
+                .map_err(err)
+                .and_then(to_json)
+        }
 
         // ----- models -----
         "hardware" => to_json(engine.hardware()),
@@ -139,6 +171,38 @@ async fn call(gw: &Gateway, device: &Device, method: &str, params: Value) -> Cal
                 .map_err(err)?;
             Ok(Value::Null)
         }
+
+        // ----- cloud providers -----
+        "providers" => to_json(
+            engine
+                .providers()
+                .iter()
+                .map(ProviderInfo::from)
+                .collect::<Vec<_>>(),
+        ),
+        "saveProvider" => {
+            let provider: Provider = serde_json::from_value(params["provider"].clone())
+                .map_err(|e| format!("bad provider: {e}"))?;
+            engine
+                .save_provider(provider)
+                .map_err(err)
+                .and_then(|p| to_json(ProviderInfo::from(&p)))
+        }
+        "deleteProvider" => {
+            engine
+                .delete_provider(str_param(&params, "id")?)
+                .map_err(err)?;
+            Ok(Value::Null)
+        }
+        "providerModels" => engine
+            .provider_models(
+                str_param(&params, "baseUrl")?,
+                params["apiKey"].as_str(),
+                params["id"].as_str(),
+            )
+            .await
+            .map_err(err)
+            .and_then(to_json),
 
         // ----- skills -----
         "skillList" => to_json(engine.skills()),

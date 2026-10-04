@@ -21,11 +21,20 @@
     "license": "Apache-2.0"
   },
   {
+    "repo": "ggml-org/Qwen2.5-VL-3B-Instruct-GGUF",
+    "name": "Qwen2.5 VL 3B",
+    "description": "Reads pictures, screenshots and scanned pages.",
+    "params_b": 3.8,
+    "license": "Qwen Research License",
+    "vision": true
+  },
+  {
     "repo": "unsloth/gemma-3-4b-it-GGUF",
     "name": "Gemma 3 4B",
-    "description": "Well rounded, good at writing.",
+    "description": "Well rounded, good at writing. Can look at pictures.",
     "params_b": 4.0,
-    "license": "Gemma Terms of Use"
+    "license": "Gemma Terms of Use",
+    "vision": true
   },
   {
     "repo": "Qwen/Qwen3-8B-GGUF",
