@@ -9,7 +9,7 @@ pub mod hardware;
 pub mod llama;
 pub mod release;
 
-pub use chat::{ChatMessage, Role};
+pub use chat::{Attachment, ChatMessage, Endpoint, ReplyStats, Role, SamplingOptions};
 pub use hardware::{Backend, Hardware};
 
 #[derive(Debug, thiserror::Error)]

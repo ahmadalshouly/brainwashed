@@ -390,6 +390,34 @@ async fn members_chat_and_admins_manage() {
         "member"
     );
     assert!(member.call("models", Value::Null).await["ok"].is_array());
+    // Anyone can attach documents, which the computer reads.
+    let doc = member
+        .call(
+            "readDocument",
+            json!({ "name": "notes.txt", "data": "YnV5IG1pbGsK" }),
+        )
+        .await;
+    assert_eq!(doc["ok"]["text"], "buy milk", "{doc}");
+    let bad = member
+        .call("readDocument", json!({ "name": "a.bin", "data": "AAEC" }))
+        .await;
+    assert!(
+        bad["error"].as_str().unwrap().contains("can't read"),
+        "{bad}"
+    );
+    // Bigger than axum's default body limit.
+    let big = member
+        .call(
+            "readDocument",
+            json!({ "name": "big.txt", "data": "YWFh".repeat(1_000_000) }),
+        )
+        .await;
+    assert_eq!(
+        big["ok"]["truncated"],
+        true,
+        "{}",
+        &big.to_string()[..200.min(big.to_string().len())]
+    );
     for (method, params) in [
         ("settings", Value::Null),
         ("devices", Value::Null),
@@ -500,4 +528,91 @@ async fn pairing_links_carry_the_public_address() {
         Some("https://ai.example.org")
     );
     assert!(gw.set_public_url(Some("ai.example.org")).is_err());
+}
+
+/// A cloud provider with an OpenAI-compatible API that answers "Hello".
+async fn fake_provider() -> String {
+    use axum::{routing::post, Router};
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(|| async {
+            (
+                [("content-type", "text/event-stream")],
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: [DONE]\n\n",
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}/v1")
+}
+
+#[tokio::test]
+async fn admins_connect_cloud_providers_and_members_use_them() {
+    let (_gw, admin_url, port, _dir) = setup().await;
+    let mut admin = Phone::from_offer(&admin_url, port);
+    admin.pair(&query(&admin_url, "t")).await.unwrap();
+    let invite = admin
+        .call("createPairingOffer", json!({ "role": "member" }))
+        .await;
+    let member_url = invite["ok"]["url"].as_str().unwrap().to_string();
+    let mut member = Phone::from_offer(&member_url, port);
+    member.pair(&query(&member_url, "t")).await.unwrap();
+
+    let base = fake_provider().await;
+    let saved = admin
+        .call(
+            "saveProvider",
+            json!({ "provider": {
+                "id": "acme", "name": "Acme AI", "baseUrl": base,
+                "apiKey": "sk-secret-1234", "models": ["fast", "big"], "members": true
+            }}),
+        )
+        .await;
+    assert_eq!(saved["ok"]["keySet"], true, "{saved}");
+    assert_eq!(saved["ok"]["keyHint"], "…1234");
+    assert!(!saved.to_string().contains("sk-secret"));
+    let listed = admin.call("providers", Value::Null).await;
+    assert!(!listed.to_string().contains("sk-secret"), "{listed}");
+
+    // Members can't change providers but see their models.
+    let denied = member.call("deleteProvider", json!({ "id": "acme" })).await;
+    assert!(denied["error"].as_str().unwrap().contains("Only admins"));
+    let models = member.call("chatModels", Value::Null).await;
+    let ids: Vec<&str> = models["ok"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["acme/fast", "acme/big"]);
+    assert_eq!(models["ok"][0]["cloud"], true);
+
+    // A member chats with a cloud model; a model the admin didn't offer is refused.
+    for (model, expect) in [("acme/fast", "done"), ("acme/secret-model", "error")] {
+        let call = member.sealed_call(
+            "chat",
+            json!({ "model": model, "messages": [{ "role": "user", "content": "hi" }] }),
+            now_ms(),
+        );
+        let (status, text) = member.post(&call).await;
+        assert_eq!(status, 200);
+        let last = member.open_line(text.lines().next_back().unwrap());
+        assert!(last.get(expect).is_some(), "{model}: {last}");
+        if expect == "done" {
+            assert_eq!(last["done"], "Hello");
+        }
+    }
+
+    // Saving without a key keeps the key.
+    let resaved = admin
+        .call(
+            "saveProvider",
+            json!({ "provider": { "id": "acme", "name": "Acme", "baseUrl": base, "models": ["fast"], "members": false }}),
+        )
+        .await;
+    assert_eq!(resaved["ok"]["keySet"], true, "{resaved}");
+    let models = member.call("chatModels", Value::Null).await;
+    assert_eq!(models["ok"], json!([]));
 }

@@ -9,7 +9,19 @@ type Block =
   | { kind: "list"; ordered: boolean; items: string[] }
   | { kind: "quote"; text: string }
   | { kind: "rule" }
+  | { kind: "table"; head: string[]; align: ("left" | "center" | "right" | undefined)[]; rows: string[][] }
   | { kind: "para"; text: string };
+
+function cells(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split(/(?<!\\)\|/)
+    .map((c) => c.trim().replace(/\\\|/g, "|"));
+}
+
+const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 
 export function parseBlocks(src: string): Block[] {
   const lines = src.replace(/\r\n/g, "\n").split("\n");
@@ -55,6 +67,17 @@ export function parseBlocks(src: string): Block[] {
       blocks.push({ kind: "list", ordered, items });
       continue;
     }
+    if (line.includes("|") && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1])) {
+      const head = cells(line);
+      const align = cells(lines[i + 1]).map((c) =>
+        c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : c.startsWith(":") ? "left" : undefined,
+      );
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(cells(lines[i++]));
+      blocks.push({ kind: "table", head, align, rows });
+      continue;
+    }
     if (line.startsWith(">")) {
       const body: string[] = [];
       while (i < lines.length && lines[i].startsWith(">")) body.push(lines[i++].replace(/^>\s?/, ""));
@@ -66,7 +89,8 @@ export function parseBlocks(src: string): Block[] {
       i < lines.length &&
       lines[i].trim() &&
       !/^(#{1,6}\s|\s*```|\s*~~~|>)/.test(lines[i]) &&
-      !item.test(lines[i])
+      !item.test(lines[i]) &&
+      !(lines[i].includes("|") && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1]))
     ) {
       body.push(lines[i++]);
     }
@@ -75,10 +99,11 @@ export function parseBlocks(src: string): Block[] {
   return blocks;
 }
 
-/** Inline code, bold, italics and links. Only http(s) and mailto links are kept. */
+/** Inline code, bold, italics, strikethrough and links. Only http(s) and mailto links are kept. */
 export function inline(text: string): ReactNode[] {
   const out: ReactNode[] = [];
-  const pattern = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*|__[^_\n]+__)|(\*[^*\n]+\*|_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))/g;
+  const pattern =
+    /(`[^`\n]+`)|(\*\*[^*\n]+\*\*|__[^_\n]+__)|(\*[^*\n]+\*|\b_[^_\n]+_\b)|(\[[^\]\n]+\]\([^)\s]+\))|(~~[^~\n]+~~)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let key = 0;
@@ -88,6 +113,7 @@ export function inline(text: string): ReactNode[] {
     if (m[1]) out.push(<code key={key++}>{t.slice(1, -1)}</code>);
     else if (m[2]) out.push(<strong key={key++}>{inline(t.slice(2, -2))}</strong>);
     else if (m[3]) out.push(<em key={key++}>{inline(t.slice(1, -1))}</em>);
+    else if (m[5]) out.push(<del key={key++}>{inline(t.slice(2, -2))}</del>);
     else {
       const [, label, href] = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(t)!;
       out.push(
@@ -155,9 +181,16 @@ export function Markdown({ text }: { text: string }) {
             const L = b.ordered ? "ol" : "ul";
             return (
               <L key={i}>
-                {b.items.map((it, j) => (
-                  <li key={j}>{inline(it)}</li>
-                ))}
+                {b.items.map((it, j) => {
+                  const task = /^\[( |x|X)\]\s+(.*)$/.exec(it);
+                  return task ? (
+                    <li key={j} className="task">
+                      <input type="checkbox" checked={task[1] !== " "} readOnly tabIndex={-1} /> {inline(task[2])}
+                    </li>
+                  ) : (
+                    <li key={j}>{inline(it)}</li>
+                  );
+                })}
               </L>
             );
           }
@@ -165,6 +198,33 @@ export function Markdown({ text }: { text: string }) {
             return <blockquote key={i}>{withBreaks(b.text)}</blockquote>;
           case "rule":
             return <hr key={i} />;
+          case "table":
+            return (
+              <div key={i} className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      {b.head.map((h, j) => (
+                        <th key={j} style={{ textAlign: b.align[j] }}>
+                          {inline(h)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.rows.map((r, j) => (
+                      <tr key={j}>
+                        {b.head.map((_, k) => (
+                          <td key={k} style={{ textAlign: b.align[k] }}>
+                            {inline(r[k] ?? "")}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
           case "para":
             return <p key={i}>{withBreaks(b.text)}</p>;
         }

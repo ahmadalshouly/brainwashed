@@ -46,8 +46,9 @@ const HEAD_TIMEOUT: Duration = Duration::from_secs(30);
 pub const PING_INTERVAL: Duration = Duration::from_secs(20);
 /// Requests in flight per host. More get 429.
 const MAX_PENDING: usize = 64;
-/// Devices send whole conversations with each chat request.
-const MAX_BODY: usize = 8 * 1024 * 1024;
+/// Devices send whole conversations with each chat request, pictures and
+/// documents included. Matches the host's limit.
+const MAX_BODY: usize = 48 * 1024 * 1024;
 
 #[derive(Clone, Default)]
 pub struct Relay {

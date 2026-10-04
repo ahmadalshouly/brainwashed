@@ -19,6 +19,8 @@ pub const SERVER_BINARY: &str = if cfg!(windows) {
 pub struct ServerOptions {
     pub binary: PathBuf,
     pub model: PathBuf,
+    /// Vision projector, for models that can look at pictures.
+    pub mmproj: Option<PathBuf>,
     pub context_size: u32,
     /// Layers to offload to the GPU. A large number means "all of them".
     pub gpu_layers: u32,
@@ -61,6 +63,9 @@ impl LlamaServer {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if let Some(mmproj) = &opts.mmproj {
+            cmd.arg("--mmproj").arg(mmproj);
+        }
         // Prebuilt releases ship their shared libraries next to the binary.
         if cfg!(target_os = "linux") {
             cmd.env("LD_LIBRARY_PATH", prepend_env("LD_LIBRARY_PATH", bin_dir));

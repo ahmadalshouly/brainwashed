@@ -1,10 +1,15 @@
 use axum::{extract::Path as UrlPath, routing::get, Json, Router};
 use brainwashed_core::{
-    Backend, ChatMessage, Engine, EngineConfig, EngineState, Role, SamplingOptions,
+    Attachment, Backend, ChatMessage, Engine, EngineConfig, EngineState, Role, SamplingOptions,
 };
 use std::time::Duration;
 
 const MODEL_BYTES: &[u8] = b"GGUF-not-really";
+const PROJECTOR_BYTES: &[u8] = b"GGUF-projector";
+
+/// Files the fake Hugging Face served, across tests in this file.
+static FETCHED: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<Vec<String>>>> =
+    std::sync::OnceLock::new();
 
 async fn serve(app: Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -18,8 +23,10 @@ async fn serve(app: Router) -> String {
 async fn fake_services(model: Vec<u8>, runtime_zip: Vec<u8>) -> String {
     let tree = serde_json::json!([
         {"type": "file", "path": "Tiny-Q4_K_M.gguf", "size": model.len()},
-        {"type": "file", "path": "Tiny-Q8_0.gguf", "size": 1}
+        {"type": "file", "path": "Tiny-Q8_0.gguf", "size": 1},
+        {"type": "file", "path": "mmproj-Tiny-F16.gguf", "size": PROJECTOR_BYTES.len()}
     ]);
+    let fetched = FETCHED.get_or_init(Default::default).clone();
     let app = Router::new()
         .route(
             "/api/models/{owner}/{repo}/tree/main",
@@ -30,9 +37,14 @@ async fn fake_services(model: Vec<u8>, runtime_zip: Vec<u8>) -> String {
             get(
                 move |UrlPath((_, _, file)): UrlPath<(String, String, String)>| {
                     let model = model.clone();
+                    let fetched = fetched.clone();
                     async move {
-                        assert_eq!(file, "Tiny-Q4_K_M.gguf");
-                        model
+                        fetched.lock().unwrap().push(file.clone());
+                        match file.as_str() {
+                            "Tiny-Q4_K_M.gguf" => model,
+                            "mmproj-Tiny-F16.gguf" => PROJECTOR_BYTES.to_vec(),
+                            other => panic!("unexpected download {other}"),
+                        }
                     }
                 },
             ),
@@ -71,7 +83,17 @@ async fn downloads_lists_and_deletes_models() {
     let model = engine.download_model("acme/Tiny-GGUF", None).await.unwrap();
     assert_eq!(model.id, "Tiny-Q4_K_M");
     assert_eq!(std::fs::read(&model.path).unwrap(), MODEL_BYTES);
+    // The vision projector comes along.
+    let mmproj = model.mmproj.clone().unwrap();
+    assert_eq!(std::fs::read(&mmproj).unwrap(), PROJECTOR_BYTES);
     assert_eq!(engine.models(), vec![model.clone()]);
+
+    // Downloading again fetches only what's missing.
+    std::fs::remove_file(&mmproj).unwrap();
+    let before = FETCHED.get().unwrap().lock().unwrap().len();
+    engine.download_model("acme/Tiny-GGUF", None).await.unwrap();
+    let fetched = FETCHED.get().unwrap().lock().unwrap()[before..].to_vec();
+    assert_eq!(fetched, vec!["mmproj-Tiny-F16.gguf".to_string()]);
 
     let mut saw_progress = false;
     while let Ok(ev) = events.try_recv() {
@@ -86,6 +108,7 @@ async fn downloads_lists_and_deletes_models() {
     engine.delete_model(&model.id).await.unwrap();
     assert!(engine.models().is_empty());
     assert!(!model.path.exists());
+    assert!(!mmproj.exists());
 }
 
 #[tokio::test]
@@ -109,6 +132,33 @@ async fn chat_needs_a_loaded_model() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("no model"));
+}
+
+#[tokio::test]
+async fn chat_checks_options_and_pictures() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = engine(dir.path(), "http://127.0.0.1:9|http://127.0.0.1:9");
+    let hot = SamplingOptions {
+        temperature: Some(5.0),
+        ..Default::default()
+    };
+    let err = engine
+        .chat(&[ChatMessage::new(Role::User, "hi")], &hot, |_| {})
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("temperature"), "{err}");
+
+    let mut message = ChatMessage::new(Role::User, "what's this?");
+    message.attachments.push(Attachment::Image {
+        name: "x.svg".into(),
+        mime: "image/svg+xml".into(),
+        data: "PHN2Zz4=".into(),
+    });
+    let err = engine
+        .chat(&[message], &SamplingOptions::default(), |_| {})
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("PNG, JPEG"), "{err}");
 }
 
 #[test]

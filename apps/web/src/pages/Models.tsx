@@ -95,7 +95,7 @@ export function ModelsPage() {
           {models.value?.map((m) => (
             <div key={m.id} className="list-row">
               <div className="grow">
-                <strong>{m.name}</strong>
+                <strong>{m.name}</strong> {m.mmproj && <Badge>sees pictures</Badge>}
                 <div className="muted small">
                   {formatBytes(m.size)}
                   {m.repo ? ` · ${m.repo}` : ""}
@@ -135,6 +135,7 @@ export function ModelsPage() {
               <div key={c.repo} className="list-row">
                 <div className="grow">
                   <strong>{c.name}</strong> {c.fits ? <Badge kind="ok">fits</Badge> : <Badge kind="warn">needs more memory</Badge>}
+                  {c.vision && <Badge>sees pictures</Badge>}
                   <div className="muted small">
                     {c.description} · {Math.round(c.params_b * 10) / 10}B parameters · {c.license}
                   </div>

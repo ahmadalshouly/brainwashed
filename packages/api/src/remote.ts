@@ -8,7 +8,12 @@ import type {
   AuditEntry,
   CatalogItem,
   ChatEvent,
+  ChatModel,
+  ChatOptions,
   ChatMessage,
+  DocumentText,
+  ProviderInfo,
+  ProviderInput,
   DeviceIdentity,
   DeviceRole,
   DownloadStatus,
@@ -164,6 +169,14 @@ const CONNECT_TIMEOUT_MS = 6000;
 /** Away from home, local addresses don't answer; give up on them sooner when a relay can take over. */
 const LAN_TIMEOUT_WITH_RELAY_MS = 2500;
 
+/**
+ * Extra wait for a big request: about 1 s per 100 KB (a slow upload over
+ * mobile data), plus time for the computer to read documents.
+ */
+function uploadAllowanceMs(method: string, bytes: number): number {
+  return (bytes > 64 * 1024 ? Math.round(bytes / 100) : 0) + (method === "readDocument" ? 60_000 : 0);
+}
+
 /** A local address, or a full URL (public address or relay), which is used as is. */
 function baseUrl(address: string, port: number): string {
   return /^https?:\/\//.test(address) ? address : `http://${address}:${port}`;
@@ -179,6 +192,8 @@ async function reach<T>(
   port: number,
   attempt: (base: string, signal: AbortSignal) => Promise<T>,
   outer?: AbortSignal,
+  /** More time for big uploads, such as attached pictures and documents. */
+  extraMs = 0,
 ): Promise<{ result: T; address: string }> {
   const hasRelay = addresses.some((a) => /^https?:\/\//.test(a));
   for (const address of addresses) {
@@ -186,7 +201,7 @@ async function reach<T>(
     const controller = new AbortController();
     const onOuterAbort = () => controller.abort();
     outer?.addEventListener("abort", onOuterAbort);
-    const timeout = hasRelay && !isRelay ? LAN_TIMEOUT_WITH_RELAY_MS : CONNECT_TIMEOUT_MS;
+    const timeout = (hasRelay && !isRelay ? LAN_TIMEOUT_WITH_RELAY_MS : CONNECT_TIMEOUT_MS) + extraMs;
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
       return { result: await attempt(baseUrl(address, port), controller.signal), address };
@@ -268,6 +283,8 @@ export class RemoteHost {
   models = () => this.call<InstalledModel[]>("models");
   skills = () => this.call<SkillInfo[]>("skills");
   whoami = () => this.call<DeviceIdentity>("whoami");
+  /** The local model (when loaded) and the cloud models this device may use. */
+  chatModels = () => this.call<ChatModel[]>("chatModels");
 
   // Admins only.
   loadModel = (id: string) => this.call<null>("loadModel", { id });
@@ -293,6 +310,13 @@ export class RemoteHost {
   setDeviceRole = (id: string, role: DeviceRole) => this.call<null>("setDeviceRole", { id, role });
   renameDevice = (id: string, name: string) => this.call<null>("renameDevice", { id, name });
   auditLog = (limit = 100) => this.call<AuditEntry[]>("auditLog", { limit });
+  providers = () => this.call<ProviderInfo[]>("providers");
+  /** Adds or updates a provider. Leave `apiKey` out to keep the saved key, or send "" to remove it. */
+  saveProvider = (provider: ProviderInput) => this.call<ProviderInfo>("saveProvider", { provider });
+  deleteProvider = (id: string) => this.call<null>("deleteProvider", { id });
+  /** Lists a provider's models, to check the address and key. `id` uses the saved key when `apiKey` is left out. */
+  providerModels = (baseUrl: string, apiKey?: string, id?: string) =>
+    this.call<string[]>("providerModels", { baseUrl, apiKey, id });
 
   private addresses(): string[] {
     const { lastAddress } = this.host;
@@ -320,6 +344,7 @@ export class RemoteHost {
         return res;
       },
       signal,
+      uploadAllowanceMs(method, body.length),
     );
     if (address !== this.host.lastAddress) {
       this.host.lastAddress = address;
@@ -335,9 +360,20 @@ export class RemoteHost {
     return reply.ok as T;
   }
 
+  /** Reads the text out of a PDF, Word document or text file (base64). */
+  readDocument(name: string, data: string): Promise<DocumentText> {
+    return this.call("readDocument", { name, data });
+  }
+
   /** Streams a reply; resolves with the full answer. */
-  async chat(messages: ChatMessage[], onEvent: (e: ChatEvent) => void, signal?: AbortSignal): Promise<string> {
-    const res = await this.post("chat", { messages }, signal);
+  async chat(
+    messages: ChatMessage[],
+    onEvent: (e: ChatEvent) => void,
+    signal?: AbortSignal,
+    /** `model`: "local" or "<provider>/<model>" from `chatModels`; the local model when left out. */
+    extra?: { options?: ChatOptions; model?: string },
+  ): Promise<string> {
+    const res = await this.post("chat", { messages, ...extra }, signal);
     let answer: string | undefined;
     const handle = (line: string) => {
       if (!line.trim()) return;

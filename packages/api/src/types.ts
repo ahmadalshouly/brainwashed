@@ -5,6 +5,95 @@ export type Role = "system" | "user" | "assistant";
 export interface ChatMessage {
   role: Role;
   content: string;
+  /** Pictures and documents sent with the message. */
+  attachments?: Attachment[];
+}
+
+/**
+ * Something sent with a message. Mirrors `Attachment` in crates/runtime.
+ * Pictures reach the model only if it has a vision projector (see
+ * `InstalledModel.mmproj`); others read "[Picture: name]". Documents travel as
+ * text: read PDFs and Word files with `readDocument` first.
+ */
+export type Attachment =
+  | { type: "image"; name: string; /** image/png, image/jpeg, image/webp or image/gif */ mime: string; /** base64 */ data: string }
+  | { type: "file"; name: string; text: string };
+
+/** A model the chat can use. Mirrors `ChatModel` in crates/core. */
+export interface ChatModel {
+  /** "local", or "<provider id>/<model>". */
+  id: string;
+  name: string;
+  /** Provider name; null for the model running on the computer. */
+  provider: string | null;
+  vision: boolean;
+  /** Messages leave the computer. */
+  cloud: boolean;
+}
+
+/** A cloud provider as admins see it. The API key never leaves the computer. */
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  baseUrl: string;
+  models: string[];
+  /** Members may use these models too. */
+  members: boolean;
+  keySet: boolean;
+  /** Last characters of the key, e.g. "…a1b2". */
+  keyHint: string | null;
+}
+
+export interface ProviderInput {
+  id: string;
+  name: string;
+  baseUrl: string;
+  /** Left out keeps the saved key; "" removes it. */
+  apiKey?: string;
+  models: string[];
+  members: boolean;
+}
+
+/** What `readDocument` returns. */
+export interface DocumentText {
+  text: string;
+  /** Pages, for PDFs. */
+  pages?: number;
+  /** The text was cut to fit. */
+  truncated: boolean;
+}
+
+/**
+ * How the model picks its words, sent with each chat. Anything left out uses
+ * the model's defaults. Mirrors `SamplingOptions` in crates/runtime.
+ */
+export interface ChatOptions {
+  /** 0 to 2. Lower is more focused, higher more creative. */
+  temperature?: number;
+  /** 0 to 1. */
+  topP?: number;
+  /** Up to 1000. */
+  topK?: number;
+  /** 0 to 1. */
+  minP?: number;
+  /** 0.5 to 2. */
+  repeatPenalty?: number;
+  /** -2 to 2. */
+  presencePenalty?: number;
+  seed?: number;
+  /** Longest reply, in tokens. */
+  maxTokens?: number;
+  /** Whether reasoning models think first. Left out keeps the model's default. */
+  reasoning?: boolean;
+}
+
+/** How a reply went. Sent once, at the end. */
+export interface ReplyStats {
+  promptTokens: number;
+  tokens: number;
+  tokensPerSecond: number;
+  /** The reply hit `maxTokens` before it finished. */
+  truncated: boolean;
 }
 
 export interface HostInfo {
@@ -51,7 +140,8 @@ export interface ChatResponse {
 export type ChatEvent =
   | { kind: "skills"; names: string[] }
   | { kind: "content"; text: string }
-  | { kind: "reasoning"; text: string };
+  | { kind: "reasoning"; text: string }
+  | ({ kind: "stats" } & ReplyStats);
 
 /** Mirrors `EngineState` in crates/core. */
 export type EngineState =
@@ -67,6 +157,8 @@ export interface InstalledModel {
   repo: string | null;
   path: string;
   size: number;
+  /** Vision projector. Set when the model can look at pictures. */
+  mmproj?: string;
 }
 
 export interface CatalogItem {
@@ -75,6 +167,8 @@ export interface CatalogItem {
   description: string;
   params_b: number;
   license: string;
+  /** Can look at pictures. */
+  vision?: boolean;
   installed: boolean;
   fits: boolean;
 }
