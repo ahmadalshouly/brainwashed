@@ -134,6 +134,17 @@ describe.skipIf(!devserver)("against the real gateway", () => {
     } else {
       await expect(chat).rejects.toThrow(/no model/);
     }
+
+    // A kept reply can be fetched again, as after a dropped connection.
+    const kept = remote.chat([{ role: "user", content: "Hi" }], () => {}, undefined, { replyId: "vitest-1" });
+    const again = remote.chatResume("vitest-1", 0, () => {});
+    if (process.env.BRAINWASHED_TEST_MODEL) {
+      await expect(again).resolves.toBe(await kept);
+    } else {
+      await expect(kept).rejects.toThrow(/no model/);
+      await expect(again).rejects.toThrow(/no model/);
+    }
+    await expect(remote.chatResume("unknown", 0, () => {})).rejects.toThrow(/no longer/);
   }, 60_000);
 
   it("falls back to the relay when the computer's addresses don't answer", async () => {

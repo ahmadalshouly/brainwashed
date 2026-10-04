@@ -41,7 +41,7 @@ The host refuses the call if any of these hold:
 
 Replies are `{ n, c }` and decrypt to `{ ok: result }` or `{ error: message }`.
 
-Any paired device can call `info`, `state`, `models`, `skills`, `whoami` (its `{ deviceId, name, role }`), `chatModels`, `readDocument { name, data }` and `chat { messages, options?, model? }`.
+Any paired device can call `info`, `state`, `models`, `skills`, `whoami` (its `{ deviceId, name, role }`), `chatModels`, `readDocument { name, data }`, `chat { messages, options?, model?, replyId? }` and `chatResume { replyId, after }`.
 
 - `chatModels` lists what the chat can use: `{ id, name, provider, vision, cloud }`. `local` is the model running on the computer (listed only while one is loaded); cloud models are `<provider>/<model>` and appear when an admin connects a provider. Members see only the models admins share with them.
 - `readDocument` takes a file as base64 (up to 25 MB) and returns `{ text, pages?, truncated }`. It reads PDFs, Word (.docx) and UTF-8 text. Send the text back as a `file` attachment.
@@ -66,11 +66,14 @@ A member calling an admin method gets `{ error }`. Devices paired before roles e
 - `messages`: `{ role, content, attachments? }[]`. An attachment is `{ type: "image", name, mime, data }` (base64 PNG, JPEG, WebP, GIF or BMP) or `{ type: "file", name, text }`. Pictures reach the model only if it can see them: the local model when it has a vision projector (`InstalledModel.mmproj`), or a cloud model. A model that can't see gets `[Picture: name]` instead, and the call fails if the latest user message has pictures. Requests can be up to 48 MB.
 - `options` (all optional): `temperature` (0 to 2), `topP`, `topK`, `minP`, `repeatPenalty`, `presencePenalty`, `seed`, `maxTokens`, and `reasoning` (true or false turns thinking on or off for models whose template supports it, such as Qwen3). Cloud providers get only the OpenAI-standard fields.
 - `model`: an id from `chatModels`. Left out, the local model answers.
+- `replyId`: an id the device picks for this reply (letters, digits, `-` and `_`, up to 64). The host keeps the reply for 15 minutes after it ends, so a device that lost the connection mid-answer can fetch the rest with `chatResume`. The host keeps writing the answer when the device disconnects, with or without an id.
 
 It streams `application/x-ndjson`. Each line is an encrypted frame that decrypts to one of:
 
 - `{ event: ChatEvent }`, sent while the reply streams. The first event is always the `skills` event. Then `reasoning` and `content` pieces, and last a `stats` event: `{ kind: "stats", promptTokens, tokens, tokensPerSecond, truncated }`.
 - `{ done: answer }` or `{ error }`, sent once at the end.
+
+`chatResume { replyId, after }` streams the same frames for a kept reply, skipping the first `after` (the frames the device already handled), then follows the reply live until it ends. Only the device that started the reply can resume it. If the host no longer has it, the stream is a single `{ error }`.
 
 ## Public address
 

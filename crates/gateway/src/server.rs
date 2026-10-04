@@ -2,6 +2,7 @@ use crate::audit::{AuditEntry, AuditLog};
 use crate::crypto::{self, Envelope, HostKeys};
 use crate::devices::{Device, DeviceRole, DeviceStore};
 use crate::relay::{self, RelayClient, RelayStatus};
+use crate::replies::{self as reply_store, Replies, Reply};
 use crate::tunnel::{Tunnel, TunnelOptions, TunnelSpec, TunnelStatus};
 use crate::{Error, Result};
 use axum::{
@@ -120,6 +121,8 @@ pub(crate) struct Inner {
     /// Set when `brainwashed stop` asks the server to quit.
     pub(crate) stop_requested: tokio::sync::Notify,
     events: broadcast::Sender<GatewayEvent>,
+    /// Recent chat replies, so a phone that dropped off can resume one.
+    replies: Replies,
 }
 
 struct Running {
@@ -139,6 +142,7 @@ impl Gateway {
                 engine,
                 offers: Mutex::new(HashMap::new()),
                 seen_nonces: Mutex::new(VecDeque::new()),
+                replies: Replies::default(),
                 running: Mutex::new(None),
                 relay_url: Mutex::new(None),
                 relay: Mutex::new(None),
@@ -737,7 +741,10 @@ async fn rpc(State(gw): State<Gateway>, Json(req): Json<RpcRequest>) -> Response
 
     if call.method == "chat" {
         let admin = device.role == DeviceRole::Admin;
-        return chat(gw, device_key, admin, call.params);
+        return chat(gw, &device.id, device_key, admin, call.params);
+    }
+    if call.method == "chatResume" {
+        return chat_resume(gw, &device.id, device_key, call.params);
     }
     let result = crate::admin::handle(&gw, &device, &call.method, call.params).await;
     let body = match result {
@@ -749,7 +756,16 @@ async fn rpc(State(gw): State<Gateway>, Json(req): Json<RpcRequest>) -> Response
 
 /// One encrypted JSON frame per line: `{"event":…}` while streaming, then
 /// `{"done":"full answer"}` or `{"error":"…"}`.
-fn chat(gw: Gateway, device_key: crypto_box::PublicKey, admin: bool, params: Value) -> Response {
+///
+/// The answer keeps being written when the phone disconnects. With a
+/// `replyId`, it is also kept for a while so `chatResume` can send the rest.
+fn chat(
+    gw: Gateway,
+    device_id: &str,
+    device_key: crypto_box::PublicKey,
+    admin: bool,
+    params: Value,
+) -> Response {
     let messages: Vec<ChatMessage> = match serde_json::from_value(params["messages"].clone()) {
         Ok(m) => m,
         Err(e) => return reject(StatusCode::BAD_REQUEST, &format!("bad messages: {e}")),
@@ -764,29 +780,62 @@ fn chat(gw: Gateway, device_key: crypto_box::PublicKey, admin: bool, params: Val
     };
     // `local` or `<provider>/<model>`; the local model when left out.
     let model = params["model"].as_str().map(str::to_string);
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    let reply = Reply::new();
+    match params["replyId"].as_str() {
+        Some(id) if reply_store::valid_id(id) => {
+            gw.inner.replies.insert(device_id, id, reply.clone())
+        }
+        Some(_) => return reject(StatusCode::BAD_REQUEST, "bad replyId"),
+        None => {}
+    }
     let engine = gw.inner.engine.clone();
+    let writer = reply.clone();
     tokio::spawn(async move {
-        let events = tx.clone();
+        let events = writer.clone();
         let result = engine
             .chat_with(
                 &messages,
                 &options,
                 model.as_deref(),
                 admin,
-                move |e: ChatEvent| {
-                    let _ = events.send(json!({ "event": e }));
-                },
+                move |e: ChatEvent| events.push(json!({ "event": e }), false),
             )
             .await;
-        let _ = tx.send(match result {
-            Ok(answer) => json!({ "done": answer }),
-            Err(e) => json!({ "error": e.to_string() }),
-        });
+        writer.push(
+            match result {
+                Ok(answer) => json!({ "done": answer }),
+                Err(e) => json!({ "error": e.to_string() }),
+            },
+            true,
+        );
     });
+    stream_frames(gw, device_key, reply.stream(0))
+}
 
-    let stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
-    let body = futures_util::StreamExt::map(stream, move |frame| {
+/// `chatResume { replyId, after }`: the frames of a kept reply from index
+/// `after` on (the number the phone already handled), then live ones until
+/// it ends.
+fn chat_resume(
+    gw: Gateway,
+    device_id: &str,
+    device_key: crypto_box::PublicKey,
+    params: Value,
+) -> Response {
+    let id = params["replyId"].as_str().unwrap_or_default();
+    let after = params["after"].as_u64().unwrap_or(0) as usize;
+    let Some(reply) = gw.inner.replies.get(device_id, id) else {
+        let gone = json!({ "error": "This reply is no longer on the computer." });
+        return stream_frames(gw, device_key, futures_util::stream::iter([gone]));
+    };
+    stream_frames(gw, device_key, reply.stream(after))
+}
+
+fn stream_frames(
+    gw: Gateway,
+    device_key: crypto_box::PublicKey,
+    frames: impl futures_util::Stream<Item = Value> + Send + 'static,
+) -> Response {
+    let body = futures_util::StreamExt::map(frames, move |frame| {
         let env = gw
             .inner
             .keys
