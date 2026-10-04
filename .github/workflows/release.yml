@@ -122,6 +122,70 @@ jobs:
             target/${{ matrix.target }}/release/bundle/nsis/*.exe
           if-no-files-found: error
 
+  cli:
+    name: Command line (${{ matrix.target }})
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-${{ matrix.target }}
+      - run: pnpm install --frozen-lockfile
+      # The binary embeds the web chat it serves to phones.
+      - run: pnpm --filter @brainwashed/web build
+      - run: cargo build --release --locked -p brainwashed-cli --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          cd target/${{ matrix.target }}/release
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a "$GITHUB_WORKSPACE/brainwashed-${{ matrix.target }}.zip" brainwashed.exe
+          else
+            tar -czf "$GITHUB_WORKSPACE/brainwashed-${{ matrix.target }}.tar.gz" brainwashed
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: brainwashed-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  # tauri-action creates the draft release, so attach the command-line builds
+  # once it exists.
+  cli-release:
+    name: Attach command-line builds
+    if: github.ref_type == 'tag'
+    needs: [installers, cli]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" brainwashed-* --clobber --repo "$GITHUB_REPOSITORY"
+
   relay-image:
     name: Relay image
     needs: check

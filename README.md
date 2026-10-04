@@ -17,6 +17,7 @@ Download BrainWashed for macOS, Windows or Linux from the [releases page](https:
 | `apps/host` | Desktop host app (Tauri 2: Rust core + React UI) |
 | `apps/web` | Web chat the host serves to browsers on your network |
 | `packages/api` | TypeScript types and client for the host's client protocol |
+| `crates/cli` | `brainwashed` command: the host without a window, for terminals and servers |
 | `crates/skills` | Parser and loader for `SKILL.md` files |
 | `crates/gateway` | The host's encrypted API for paired devices, and its relay connection |
 | `crates/relay` | Relay server for using BrainWashed away from home ([docs](docs/relay.md)) |

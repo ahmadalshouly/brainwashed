@@ -13,6 +13,15 @@ Download the installer for your computer from the [latest release](https://githu
 
 Not sure which Mac you have? Apple menu > About This Mac: "Chip: Apple M…" means Apple silicon.
 
+## Or install from a terminal
+
+The command-line version does everything except show a window: it downloads a model, serves the web chat to your browser and your phone, and lets you chat in the terminal.
+
+- **Windows** (PowerShell): `irm https://raw.githubusercontent.com/ahmadalshouly/brainwashed/main/install.ps1 | iex`
+- **macOS and Linux**: `curl -fsSL https://raw.githubusercontent.com/ahmadalshouly/brainwashed/main/install.sh | sh`
+
+It starts right away. The first run downloads a small model that fits your computer and opens the chat in your browser; scan the QR code in the terminal to use it from your phone. Later, run `brainwashed` again, or `brainwashed --help` for the other commands (`chat`, `models`, `pull`, `use`, `skills`). It shares models, skills and paired devices with the desktop app, so run one or the other.
+
 ## First start
 
 1. Open BrainWashed. The **Models** tab suggests models that fit your computer's memory.
