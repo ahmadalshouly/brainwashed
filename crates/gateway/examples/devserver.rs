@@ -1,4 +1,4 @@
-//! Runs the engine and phone gateway without the desktop app, for testing
+//! Runs the engine and gateway on their own, for testing
 //! phone clients. Also runs a relay on loopback and connects the gateway to
 //! it, as if the client were away from home. Prints one JSON line with a
 //! pairing link, then serves.
@@ -9,7 +9,7 @@
 //! Set BRAINWASHED_TEST_LLAMA_SERVER and BRAINWASHED_TEST_MODEL to also load a model.
 
 use brainwashed_core::{Engine, EngineConfig};
-use brainwashed_gateway::Gateway;
+use brainwashed_gateway::{DeviceRole, Gateway};
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -42,7 +42,7 @@ async fn main() {
     while !gateway.status().relay.is_some_and(|r| r.connected) {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    let offer = gateway.create_pairing_offer().unwrap();
+    let offer = gateway.create_pairing_offer(DeviceRole::Admin).unwrap();
     println!(
         "{}",
         serde_json::json!({ "url": offer.url, "port": addr.port() })

@@ -12,7 +12,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-CI runs the same checks and builds the desktop host on macOS, Windows and Linux.
+CI runs the same checks and builds `brainwashed` on macOS, Windows and Linux.
 
 ## Conventions
 

@@ -10,7 +10,7 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "build": "pnpm -r --if-present build",
-    "host:dev": "pnpm --filter @brainwashed/host tauri dev",
+    "dev": "cargo run -p brainwashed-cli --",
     "web:build": "pnpm --filter @brainwashed/web build"
   },
   "pnpm": {

@@ -21,14 +21,42 @@ pub struct Settings {
     pub system_prompt: String,
     /// Skills the user switched off.
     pub disabled_skills: Vec<String>,
-    /// Let paired phones on the local network use this computer.
+    /// Unused since the desktop app was removed: the `brainwashed` command
+    /// always serves. Kept so older settings files still load.
     pub phone_access: bool,
     pub phone_port: u16,
     /// Relay that devices away from home connect through, e.g.
     /// `https://relay.example.org`. None keeps access to the local network.
     pub relay_url: Option<String>,
+    /// How devices away from home reach this computer, besides the relay.
+    pub remote_access: RemoteAccess,
+    /// Cloudflare tunnel token, for `RemoteAccess::Cloudflare`.
+    pub tunnel_token: Option<String>,
+    /// The stable address this computer is reachable at from anywhere, e.g.
+    /// `https://ai.example.org`: the hostname of a Cloudflare tunnel, a
+    /// Tailscale Funnel address or your own reverse proxy. Pairing links and
+    /// QR codes use it.
+    pub public_url: Option<String>,
+    /// Use this cloudflared instead of downloading one.
+    pub cloudflared_path: Option<PathBuf>,
     /// Look on GitHub for newer releases at startup.
     pub check_for_updates: bool,
+}
+
+/// Ways to reach the host from outside the local network with no server of
+/// your own.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RemoteAccess {
+    /// Local network only (plus the relay, when one is set).
+    Off,
+    /// A free Cloudflare quick tunnel: no account, a new
+    /// `https://<random>.trycloudflare.com` address each time it starts.
+    #[default]
+    Quick,
+    /// A Cloudflare tunnel on your own domain, from `tunnel_token`. The
+    /// address stays the same; set it as `public_url`.
+    Cloudflare,
 }
 
 impl Default for Settings {
@@ -45,6 +73,10 @@ impl Default for Settings {
             phone_access: false,
             phone_port: 47860,
             relay_url: None,
+            remote_access: RemoteAccess::default(),
+            tunnel_token: None,
+            public_url: None,
+            cloudflared_path: None,
             check_for_updates: true,
         }
     }

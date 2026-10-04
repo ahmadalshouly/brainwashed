@@ -233,7 +233,14 @@ impl Engine {
     }
 
     pub fn update_settings(&self, settings: Settings) -> Result<()> {
-        store::save(&self.inner.config.data_dir.join("settings.json"), &settings)?;
+        let path = self.inner.config.data_dir.join("settings.json");
+        store::save(&path, &settings)?;
+        // It can hold a tunnel token.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
         *self.inner.settings.write().unwrap() = settings;
         Ok(())
     }

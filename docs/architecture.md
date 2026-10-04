@@ -2,15 +2,17 @@
 
 _Draft 1, 2026-10-03. Turns a personal laptop into a private AI host, with a phone app that talks to it from anywhere._
 
+> **Update, 2026-10-04:** the desktop app (Tauri) is gone. The host is the `brainwashed` command (`crates/cli`), which serves a web app with chat and admin pages (`apps/web`). Remote access defaults to a Cloudflare tunnel run by the host, with your own domain, any public address, or the relay as options ([remote-access.md](remote-access.md)). Paired devices are admins or members, and admin changes go to an audit log. Read "Host app" below as "host command" and "Tauri host" as the command.
+
 ## 1. What we are building
 
 | Piece | What it does | Recommended stack |
 |---|---|---|
-| **Host app** (macOS, Windows, Linux) | Tray app that downloads and runs models, loads skills, serves an API, pairs phones | Tauri 2 (Rust core + React/TypeScript UI) |
+| **Host** (macOS, Windows, Linux) | `brainwashed` command that downloads and runs models, loads skills, serves the web app and API, pairs devices | Rust, with the admin UI in the web app |
 | **Model runtime** | Runs any open GGUF model on CPU or GPU | llama.cpp `llama-server`, bundled as a sidecar |
 | **Skills engine** | Loads user-written `.md` skills into the model at inference time | Rust module in the host, small embedding model for routing |
-| **Connectivity** | Phone reaches the laptop at home or away, end-to-end encrypted | LAN first (QR pairing), then a self-hostable relay that forwards end-to-end encrypted traffic |
-| **Web chat** | Chat from any browser on the network, paired by QR | React app served by the host (`apps/web`) |
+| **Connectivity** | Phone reaches the laptop at home or away, end-to-end encrypted | LAN, plus a Cloudflare tunnel by default; own domain, any public URL or a self-hostable relay as options |
+| **Web app** | Chat from any browser, plus admin pages for models, skills, devices, remote access, settings and activity | React app served by the host (`apps/web`) |
 | **Mobile app** (iOS, Android) | Optional paid client: chat, pick model, manage skills | React Native + Expo, closed source in a separate repo; uses only the public [client protocol](client-protocol.md) |
 | **BrainWashed model** | Ahmad's fine-tuned 2-3B model, the default download | QLoRA fine-tune of an Apache-2.0 base, shipped as GGUF Q4_K_M (~2 GB) |
 
