@@ -640,3 +640,52 @@ async fn admins_connect_cloud_providers_and_members_use_them() {
     let models = member.call("chatModels", Value::Null).await;
     assert_eq!(models["ok"], json!([]));
 }
+
+#[tokio::test]
+async fn a_phone_that_dropped_off_resumes_its_reply() {
+    let (_gw, url, port, _dir) = setup().await;
+    let mut phone = Phone::from_offer(&url, port);
+    phone.pair(&query(&url, "t")).await.unwrap();
+    let base = fake_provider().await;
+    phone
+        .call(
+            "saveProvider",
+            json!({ "provider": { "id": "acme", "name": "Acme", "baseUrl": base, "apiKey": "k", "models": ["fast"], "members": false }}),
+        )
+        .await;
+
+    let call = phone.sealed_call(
+        "chat",
+        json!({ "replyId": "r-1", "model": "acme/fast", "messages": [{ "role": "user", "content": "hi" }] }),
+        now_ms(),
+    );
+    let (_, text) = phone.post(&call).await;
+    let frames: Vec<Value> = text.lines().map(|l| phone.open_line(l)).collect();
+    assert_eq!(frames.last().unwrap()["done"], "Hello");
+
+    // Having handled only the first frame, the phone gets the rest.
+    let resume = |after: usize, id: &str| {
+        phone.sealed_call(
+            "chatResume",
+            json!({ "replyId": id, "after": after }),
+            now_ms(),
+        )
+    };
+    let (status, text) = phone.post(&resume(1, "r-1")).await;
+    assert_eq!(status, 200);
+    let rest: Vec<Value> = text.lines().map(|l| phone.open_line(l)).collect();
+    assert_eq!(rest, frames[1..].to_vec());
+
+    // An unknown reply says so.
+    let (_, text) = phone.post(&resume(0, "nope")).await;
+    let gone = phone.open_line(text.lines().next().unwrap());
+    assert!(gone["error"].as_str().unwrap().contains("no longer"));
+
+    // Ids are checked.
+    let bad = phone.sealed_call(
+        "chat",
+        json!({ "replyId": "../x", "messages": [{ "role": "user", "content": "hi" }] }),
+        now_ms(),
+    );
+    assert_eq!(phone.post(&bad).await.0, 400);
+}

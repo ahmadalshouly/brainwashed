@@ -367,15 +367,33 @@ export class RemoteHost {
     return this.call("readDocument", { name, data });
   }
 
-  /** Streams a reply; resolves with the full answer. */
+  /**
+   * Streams a reply; resolves with the full answer.
+   *
+   * With a `replyId` (letters, digits, `-` and `_`, up to 64), the computer
+   * keeps the reply for a while, so if the connection drops the rest can be
+   * fetched with `chatResume`. The computer keeps writing the answer either way.
+   */
   async chat(
     messages: ChatMessage[],
     onEvent: (e: ChatEvent) => void,
     signal?: AbortSignal,
     /** `model`: "local" or "<provider>/<model>" from `chatModels`; the local model when left out. */
-    extra?: { options?: ChatOptions; model?: string },
+    extra?: { options?: ChatOptions; model?: string; replyId?: string },
   ): Promise<string> {
-    const res = await this.post("chat", { messages, ...extra }, signal);
+    return this.readFrames(await this.post("chat", { messages, ...extra }, signal), onEvent);
+  }
+
+  /**
+   * Continues a reply started with `chat` and a `replyId`: the events after
+   * the first `after` ones (the count `onEvent` already saw), then the rest
+   * as it is written. Rejects if the computer no longer has the reply.
+   */
+  async chatResume(replyId: string, after: number, onEvent: (e: ChatEvent) => void, signal?: AbortSignal): Promise<string> {
+    return this.readFrames(await this.post("chatResume", { replyId, after }, signal), onEvent);
+  }
+
+  private async readFrames(res: Awaited<ReturnType<FetchLike>>, onEvent: (e: ChatEvent) => void): Promise<string> {
     let answer: string | undefined;
     const handle = (line: string) => {
       if (!line.trim()) return;
