@@ -734,6 +734,51 @@ select:focus {
   transform: translateX(16px);
 }
 
+/* ----- skills ----- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs button {
+  border: none;
+  background: none;
+  border-radius: 0;
+  padding: 8px 12px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+}
+
+.tabs button.on {
+  color: inherit;
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+.chips {
+  margin-top: 10px;
+}
+
+.chip {
+  font-size: 0.8em;
+  padding: 3px 10px;
+  border-radius: 99px;
+}
+
+.chip.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.warnings {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
 .editor {
   width: 100%;
   min-height: 60vh;

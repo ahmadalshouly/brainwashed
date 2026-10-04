@@ -36,6 +36,12 @@ Usage:
                              Hugging Face GGUF repo like `Qwen/Qwen3-4B-GGUF`.
   brainwashed use <model>    Load this model from now on.
   brainwashed skills         Show your skills and the folder they live in.
+  brainwashed skills search [words]
+                             Find skills other people shared.
+  brainwashed skills install <name or link>
+                             Install a shared skill, or one from a link to a
+                             SKILL.md. Shows it to you first.
+  brainwashed skills update  Update skills installed from the community.
   brainwashed remote <how>   Choose how devices reach this computer from anywhere:
                                quick                 free Cloudflare address, no
                                                      account (default; it changes
@@ -56,6 +62,7 @@ Options:
   --no-browser               Don't open the admin page.
   --local-only               Don't open a tunnel this time.
   --data-dir <dir>           Keep models and settings here instead.
+  -y, --yes                  Don't ask before installing.
   -V, --version              Print the version.
 ";
 
@@ -66,6 +73,7 @@ struct Args {
     browser: bool,
     local_only: bool,
     data_dir: Option<PathBuf>,
+    yes: bool,
 }
 
 fn parse_args() -> std::result::Result<Args, String> {
@@ -76,6 +84,7 @@ fn parse_args() -> std::result::Result<Args, String> {
         browser: true,
         local_only: false,
         data_dir: None,
+        yes: false,
     };
     let mut positional = Vec::new();
     let mut it = std::env::args().skip(1);
@@ -85,6 +94,7 @@ fn parse_args() -> std::result::Result<Args, String> {
             "-V" | "--version" => args.command = "version".into(),
             "--no-browser" => args.browser = false,
             "--local-only" => args.local_only = true,
+            "-y" | "--yes" => args.yes = true,
             "--port" => {
                 let p = it.next().ok_or("--port needs a number")?;
                 args.port = Some(
@@ -219,22 +229,7 @@ async fn run(args: Args) -> Result {
             println!("BrainWashed will use {} from now on.", model.name);
             Ok(())
         }
-        "skills" => {
-            let list = engine.skills();
-            println!("Skills folder: {}\n", list.dir.display());
-            for s in &list.skills {
-                let off = if s.enabled { "" } else { " (off)" };
-                println!(
-                    "  {}{off}: {}",
-                    s.entry.skill.name, s.entry.skill.description
-                );
-            }
-            for e in &list.errors {
-                println!("  ! {}: {}", e.path.display(), e.message);
-            }
-            println!("\nAdd a skill by creating a folder there with a SKILL.md file in it, or in the admin page. Changes apply right away.");
-            Ok(())
-        }
+        "skills" => skills(&engine, &args).await,
         "remote" => remote(
             &engine,
             &args.operands,
@@ -242,6 +237,134 @@ async fn run(args: Args) -> Result {
         ),
         other => Err(format!("unknown command `{other}`; run `brainwashed --help`").into()),
     }
+}
+
+// ----- skills -----
+
+async fn skills(engine: &Engine, args: &Args) -> Result {
+    let ops = &args.operands;
+    match ops.first().map(String::as_str) {
+        None => {
+            let list = engine.skills();
+            println!("Skills folder: {}\n", list.dir.display());
+            for s in &list.skills {
+                let off = if s.enabled { "" } else { " (off)" };
+                let from = match &s.origin {
+                    Some(o) if o.community => " [community]",
+                    Some(_) => " [installed from a link]",
+                    None => "",
+                };
+                println!(
+                    "  {}{off}{from}: {}",
+                    s.entry.skill.name, s.entry.skill.description
+                );
+            }
+            for e in &list.errors {
+                println!("  ! {}: {}", e.path.display(), e.message);
+            }
+            println!("\nAdd a skill by creating a folder there with a SKILL.md file in it, or in the admin page. Changes apply right away.");
+            println!("Find skills other people shared with `brainwashed skills search`.");
+            Ok(())
+        }
+        Some("search") => {
+            let words: Vec<String> = ops[1..].iter().map(|w| w.to_lowercase()).collect();
+            let found: Vec<_> = engine
+                .community_skills()
+                .await?
+                .into_iter()
+                .filter(|s| {
+                    let text = format!(
+                        "{} {} {} {}",
+                        s.name,
+                        s.description,
+                        s.triggers.join(" "),
+                        s.category.as_deref().unwrap_or("")
+                    )
+                    .to_lowercase();
+                    words.iter().all(|w| text.contains(w))
+                })
+                .collect();
+            if found.is_empty() {
+                println!("No community skills match.");
+            }
+            for s in &found {
+                let by = s
+                    .author
+                    .as_deref()
+                    .map(|a| format!(" (by {a})"))
+                    .unwrap_or_default();
+                println!("  {}{by}: {}", s.name, s.description);
+            }
+            if !found.is_empty() {
+                println!("\nInstall one with `brainwashed skills install <name>`.");
+            }
+            Ok(())
+        }
+        Some("install") => {
+            let spec = ops
+                .get(1)
+                .ok_or("say which skill, e.g. `brainwashed skills install meal-planner`")?;
+            let preview = engine.preview_skill(spec).await?;
+            println!("{}\n", preview.source.trim_end());
+            println!("--- from {}", preview.url);
+            for w in &preview.warnings {
+                println!("  ! {w}");
+            }
+            if preview.installed {
+                println!("This replaces your skill named `{}`.", preview.name);
+            }
+            if !args.yes && !confirm(&format!("Install {}?", preview.name))? {
+                println!("Not installed.");
+                return Ok(());
+            }
+            let done = engine
+                .install_skill(spec, Some(&preview.sha256), true)
+                .await?;
+            println!("Installed {}. It applies right away.", done.name);
+            Ok(())
+        }
+        Some("update") => {
+            let index = engine.community_skills().await?;
+            let mut updated = 0;
+            for s in engine.skills().skills {
+                let Some(origin) = s.origin.filter(|o| o.community) else {
+                    continue;
+                };
+                let name = &s.entry.skill.name;
+                let Some(latest) = index.iter().find(|c| &c.name == name) else {
+                    continue;
+                };
+                if latest.sha256.eq_ignore_ascii_case(&origin.sha256) {
+                    continue;
+                }
+                if s.modified {
+                    println!("  {name}: an update is out, but you changed this skill, so it was left alone. Run `brainwashed skills install {name}` to replace it.");
+                    continue;
+                }
+                engine
+                    .install_skill(name, Some(&latest.sha256), true)
+                    .await?;
+                println!("  {name}: updated");
+                updated += 1;
+            }
+            println!(
+                "{updated} skill{} updated.",
+                if updated == 1 { "" } else { "s" }
+            );
+            Ok(())
+        }
+        Some(other) => {
+            Err(format!("unknown skills command `{other}`; try search, install or update").into())
+        }
+    }
+}
+
+fn confirm(question: &str) -> Result<bool> {
+    print!("{question} [y/N] ");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"))
 }
 
 // ----- serve -----

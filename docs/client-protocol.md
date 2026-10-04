@@ -51,7 +51,7 @@ Admins can also call:
 | Area | Methods |
 |---|---|
 | Models | `loadModel { id }`, `unloadModel`, `hardware`, `catalog`, `downloadModel { repo, quant? }` (returns at once; poll `downloads`), `downloads`, `deleteModel { id }` |
-| Skills | `setSkillEnabled { name, enabled }`, `skillList` (folder, skills, load errors), `skillSource { name }`, `saveSkill { source, previousName? }`, `deleteSkill { name }` |
+| Skills | `setSkillEnabled { name, enabled }`, `skillList` (folder, skills, load errors), `skillSource { name }`, `saveSkill { source, previousName? }`, `deleteSkill { name }`, `communitySkills` (the community index), `previewSkill { spec }` (a community skill name or a link; returns the source, its SHA-256 and warnings), `installSkill { spec, sha256, replace? }` |
 | Settings | `settings`, `updateSettings { settings }` (only the fields given change; the tunnel token is never sent back, only `tunnel_token_set`), `access` (addresses, tunnel, relay, public URL), `checkForUpdate` |
 | Devices | `devices`, `createPairingOffer { role }` (includes `qr`, the code as rows of `0`/`1`), `removeDevice { id }`, `setDeviceRole { id, role }`, `renameDevice { id, name }` |
 | Cloud providers | `providers` (keys are never sent back, only `keySet` and `keyHint`), `saveProvider { provider: { id, name, baseUrl, apiKey?, models, members } }` (no `apiKey` keeps the saved key), `deleteProvider { id }`, `providerModels { baseUrl, apiKey?, id? }` |
