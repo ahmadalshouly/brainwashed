@@ -167,6 +167,18 @@ async function errorFrom(res: { status: number; text(): Promise<string> }): Prom
 }
 
 /** How long to wait for an address to answer before trying the next one. */
+/**
+ * For streamed replies. On Android, Expo's fetch holds back brotli-compressed
+ * bodies and, in development builds, any body its network inspector doesn't
+ * recognize as a stream, so the whole answer would appear at once. Asking for
+ * an uncompressed event stream avoids both; browsers ignore Accept-Encoding.
+ */
+const STREAM_HEADERS = {
+  "Content-Type": "application/json",
+  Accept: "text/event-stream, application/x-ndjson",
+  "Accept-Encoding": "identity",
+};
+
 const CONNECT_TIMEOUT_MS = 6000;
 /** Away from home, local addresses don't answer; give up on them sooner when a relay can take over. */
 const LAN_TIMEOUT_WITH_RELAY_MS = 2500;
@@ -333,7 +345,7 @@ export class RemoteHost {
     return lastAddress && all.includes(lastAddress) ? [lastAddress, ...all.filter((a) => a !== lastAddress)] : all;
   }
 
-  private async post(method: string, params: unknown, signal?: AbortSignal) {
+  private async post(method: string, params: unknown, signal?: AbortSignal, streamed = false) {
     const env = seal({ ts: Date.now(), method, params: params ?? null }, this.hostKey, this.secretKey);
     const body = JSON.stringify({ deviceId: this.host.deviceId, ...env });
     // The attempt's signal times out only until a response arrives; after
@@ -345,7 +357,7 @@ export class RemoteHost {
       async (base, attemptSignal) => {
         const res = await this.fetchImpl(`${base}/rpc`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: streamed ? STREAM_HEADERS : { "Content-Type": "application/json" },
           body,
           signal: attemptSignal,
         });
@@ -388,7 +400,7 @@ export class RemoteHost {
     /** `model`: "local" or "<provider>/<model>" from `chatModels`; the local model when left out. */
     extra?: { options?: ChatOptions; model?: string; replyId?: string },
   ): Promise<string> {
-    return this.readFrames(await this.post("chat", { messages, ...extra }, signal), onEvent);
+    return this.readFrames(await this.post("chat", { messages, ...extra }, signal, true), onEvent);
   }
 
   /**
@@ -397,7 +409,7 @@ export class RemoteHost {
    * as it is written. Rejects if the computer no longer has the reply.
    */
   async chatResume(replyId: string, after: number, onEvent: (e: ChatEvent) => void, signal?: AbortSignal): Promise<string> {
-    return this.readFrames(await this.post("chatResume", { replyId, after }, signal), onEvent);
+    return this.readFrames(await this.post("chatResume", { replyId, after }, signal, true), onEvent);
   }
 
   private async readFrames(res: Awaited<ReturnType<FetchLike>>, onEvent: (e: ChatEvent) => void): Promise<string> {

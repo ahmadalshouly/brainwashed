@@ -68,7 +68,7 @@ A member calling an admin method gets `{ error }`. Devices paired before roles e
 - `model`: an id from `chatModels`. Left out, the local model answers.
 - `replyId`: an id the device picks for this reply (letters, digits, `-` and `_`, up to 64). The host keeps the reply for 15 minutes after it ends, so a device that lost the connection mid-answer can fetch the rest with `chatResume`. The host keeps writing the answer when the device disconnects, with or without an id.
 
-It streams `application/x-ndjson`. Each line is an encrypted frame that decrypts to one of:
+It streams `application/x-ndjson` (uncompressed: send `Accept-Encoding: identity`; on Android Expo also needs `Accept: text/event-stream` so its dev-build network inspector doesn't hold the body back). Each line is an encrypted frame that decrypts to one of:
 
 - `{ event: ChatEvent }`, sent while the reply streams. The first event is always the `skills` event. Then `reasoning` and `content` pieces, and last a `stats` event: `{ kind: "stats", promptTokens, tokens, tokensPerSecond, truncated }`.
 - `{ done: answer }` or `{ error }`, sent once at the end.
