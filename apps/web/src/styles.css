@@ -1088,3 +1088,46 @@ select:focus {
     grid-template-columns: 1fr;
   }
 }
+
+/* ----- admin: API ----- */
+
+.api-addresses {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.api-address {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.api-new-key {
+  margin-bottom: 12px;
+}
+
+.api-new-key input {
+  min-width: 200px;
+}
+
+.break {
+  word-break: break-all;
+}
+
+@media (max-width: 760px) {
+  .api-keys th:nth-child(2),
+  .api-keys td:nth-child(2),
+  .api-keys th:nth-child(3),
+  .api-keys td:nth-child(3),
+  .api-keys th:nth-child(5),
+  .api-keys td:nth-child(5) {
+    display: none;
+  }
+
+  .api-keys th:nth-child(4),
+  .api-keys td:nth-child(4) {
+    display: table-cell;
+  }
+}

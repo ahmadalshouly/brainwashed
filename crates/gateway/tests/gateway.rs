@@ -689,3 +689,193 @@ async fn a_phone_that_dropped_off_resumes_its_reply() {
     );
     assert_eq!(phone.post(&bad).await.0, 400);
 }
+
+#[tokio::test]
+async fn the_openai_api_uses_keys_skills_and_chat_defaults() {
+    use axum::{routing::post, Json, Router};
+    use std::sync::{Arc, Mutex};
+
+    // A cloud provider that remembers what it was sent.
+    let seen: Arc<Mutex<Vec<Value>>> = Arc::default();
+    let record = seen.clone();
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(move |Json(body): Json<Value>| {
+            let record = record.clone();
+            async move {
+                record.lock().unwrap().push(body);
+                (
+                    [("content-type", "text/event-stream")],
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\ndata: [DONE]\n\n",
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let (_gw, url, port, _dir) = setup().await;
+    let mut admin = Phone::from_offer(&url, port);
+    admin.pair(&query(&url, "t")).await.unwrap();
+    for (id, members) in [("acme", true), ("private", false)] {
+        admin
+            .call(
+                "saveProvider",
+                json!({ "provider": { "id": id, "name": id, "baseUrl": base, "apiKey": "k", "models": ["fast"], "members": members }}),
+            )
+            .await;
+    }
+    let mut settings = admin.call("settings", Value::Null).await["ok"].clone();
+    settings["chat_defaults"] = json!({ "temperature": 0.3 });
+    admin
+        .call("updateSettings", json!({ "settings": settings }))
+        .await;
+
+    let created = admin
+        .call("createApiKey", json!({ "name": "scripts" }))
+        .await;
+    let secret = created["ok"]["secret"].as_str().unwrap().to_string();
+    let key_id = created["ok"]["key"]["id"].as_str().unwrap().to_string();
+    assert_eq!(created["ok"]["key"]["role"], "member");
+    let listed = admin.call("apiKeys", Value::Null).await;
+    assert_eq!(listed["ok"][0]["name"], "scripts");
+    assert!(!listed.to_string().contains(&secret));
+
+    let api = format!("http://127.0.0.1:{port}/v1");
+    let http = reqwest::Client::new();
+
+    // No key, or a wrong one, is refused.
+    let r = http.get(format!("{api}/models")).send().await.unwrap();
+    assert_eq!(r.status(), 401);
+    let r = http
+        .get(format!("{api}/models"))
+        .bearer_auth("bw-nope")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+
+    // A member key sees only the models shared with members.
+    let models: Value = http
+        .get(format!("{api}/models"))
+        .bearer_auth(&secret)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let ids: Vec<&str> = models["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["acme/fast"]);
+
+    // A whole reply.
+    let r = http
+        .post(format!("{api}/chat/completions"))
+        .bearer_auth(&secret)
+        .json(&json!({
+            "model": "acme/fast",
+            "messages": [
+                { "role": "system", "content": "Be brief." },
+                { "role": "user", "content": [{ "type": "text", "text": "proofread this please" }] }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let body: Value = r.json().await.unwrap();
+    assert_eq!(body["object"], "chat.completion");
+    assert_eq!(body["choices"][0]["message"]["content"], "Hello");
+    assert_eq!(body["choices"][0]["finish_reason"], "stop");
+
+    // The admin's defaults and the skills reach the model; the caller's own
+    // system message is kept.
+    let sent = seen.lock().unwrap().last().unwrap().clone();
+    assert_eq!(sent["temperature"], 0.3, "{sent}");
+    let system = sent["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("## Skill: writing-assistant"), "{system}");
+    assert!(sent.to_string().contains("Be brief."));
+
+    // Streaming, with usage.
+    let text = http
+        .post(format!("{api}/chat/completions"))
+        .bearer_auth(&secret)
+        .json(&json!({
+            "model": "acme/fast", "stream": true, "temperature": 1.1,
+            "stream_options": { "include_usage": true },
+            "messages": [{ "role": "user", "content": "hi" }]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let events: Vec<&str> = text
+        .split("\n\n")
+        .filter_map(|e| e.strip_prefix("data: "))
+        .collect();
+    assert_eq!(*events.last().unwrap(), "[DONE]", "{text}");
+    let chunks: Vec<Value> = events[..events.len() - 1]
+        .iter()
+        .map(|e| serde_json::from_str(e).unwrap())
+        .collect();
+    assert_eq!(chunks[0]["choices"][0]["delta"]["role"], "assistant");
+    let answer: String = chunks
+        .iter()
+        .filter_map(|c| c["choices"][0]["delta"]["content"].as_str())
+        .collect();
+    assert_eq!(answer, "Hello");
+    assert!(chunks
+        .iter()
+        .any(|c| c["choices"][0]["finish_reason"] == "stop"));
+    assert!(chunks.last().unwrap()["usage"].is_object());
+    assert_eq!(seen.lock().unwrap().last().unwrap()["temperature"], 1.1);
+
+    // Models members can't use, bad options and other roles are refused.
+    for (body, status) in [
+        (
+            json!({ "model": "private/fast", "messages": [{ "role": "user", "content": "hi" }] }),
+            404,
+        ),
+        (
+            json!({ "model": "acme/fast", "temperature": 9, "messages": [{ "role": "user", "content": "hi" }] }),
+            400,
+        ),
+        (
+            json!({ "model": "acme/fast", "messages": [{ "role": "tool", "content": "x" }] }),
+            400,
+        ),
+        (
+            json!({ "model": "acme/fast", "messages": [{ "role": "user", "content": [{ "type": "image_url", "image_url": { "url": "https://example.com/a.png" } }] }] }),
+            400,
+        ),
+    ] {
+        let r = http
+            .post(format!("{api}/chat/completions"))
+            .bearer_auth(&secret)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), status, "{body}");
+        let err: Value = r.json().await.unwrap();
+        assert!(err["error"]["message"].is_string());
+    }
+
+    // A revoked key stops working.
+    admin.call("revokeApiKey", json!({ "id": key_id })).await;
+    let r = http
+        .get(format!("{api}/models"))
+        .bearer_auth(&secret)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+}

@@ -16,6 +16,7 @@ import { OverviewPage } from "./pages/Overview";
 import { ModelsPage } from "./pages/Models";
 import { ProvidersPage } from "./pages/Providers";
 import { SkillsPage } from "./pages/Skills";
+import { ApiPage } from "./pages/Api";
 import { DevicesPage } from "./pages/Devices";
 import { RemotePage } from "./pages/Remote";
 import { SettingsPage } from "./pages/Settings";
@@ -196,6 +197,7 @@ const NAV: NavItem[] = [
   },
   { id: "skills", label: "Skills", icon: "M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h7", admin: true },
   { id: "devices", label: "Devices", icon: "M7 2h10v20H7zM11 18h2", admin: true },
+  { id: "api", label: "API", icon: "M8 8l-4 4 4 4M16 8l4 4-4 4M14 5l-4 14", admin: true },
   {
     id: "remote",
     label: "Remote access",
@@ -382,6 +384,7 @@ function Shell({
           {current === "providers" && <ProvidersPage />}
           {current === "skills" && <SkillsPage />}
           {current === "devices" && <DevicesPage />}
+          {current === "api" && <ApiPage />}
           {current === "remote" && <RemotePage />}
           {current === "activity" && <ActivityPage />}
           {current === "settings" && <SettingsPage />}

@@ -56,6 +56,7 @@ Admins can also call:
 | Settings | `settings`, `updateSettings { settings }` (only the fields given change; the tunnel token is never sent back, only `tunnel_token_set`), `access` (addresses, tunnel, relay, public URL), `checkForUpdate` |
 | Devices | `devices`, `createPairingOffer { role }` (includes `qr`, the code as rows of `0`/`1`), `removeDevice { id }`, `setDeviceRole { id, role }`, `renameDevice { id, name }` |
 | Cloud providers | `providers` (keys are never sent back, only `keySet` and `keyHint`), `saveProvider { provider: { id, name, baseUrl, apiKey?, models, members } }` (no `apiKey` keeps the saved key), `deleteProvider { id }`, `providerModels { baseUrl, apiKey?, id? }` |
+| API keys | `apiKeys`, `createApiKey { name, role? }` (returns `{ key, secret }`; the secret is shown only this once), `revokeApiKey { id }`. The keys are for the OpenAI-compatible API in [api.md](api.md). |
 | Audit | `auditLog { limit? }`, newest first |
 
 A member calling an admin method gets `{ error }`. Devices paired before roles existed are admins. Every admin call that changes something, and every pairing, is written to the host's audit log.
