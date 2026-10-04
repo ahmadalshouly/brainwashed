@@ -17,7 +17,10 @@ $dir = Join-Path $env:LOCALAPPDATA "Programs\BrainWashed"
 if ($env:BRAINWASHED_VERSION) {
     $release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/tags/$($env:BRAINWASHED_VERSION)"
 } else {
-    $release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=20" |
+    # Assign first: Windows PowerShell 5.1 passes a JSON array down the
+    # pipeline as one object instead of one release at a time.
+    $releases = Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=20"
+    $release = $releases |
         Where-Object { -not $_.draft -and ($_.assets.name -contains $asset) } |
         Select-Object -First 1
 }
