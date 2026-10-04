@@ -48,6 +48,23 @@ BrainWashed checks GitHub for new releases and the admin page's **Overview** say
 
 The first time BrainWashed serves, Windows may ask whether it may use the network. Allow **Private networks** so phones on your Wi-Fi can connect directly. Remote access through the tunnel works either way.
 
+## Windows Smart App Control
+
+On some Windows 11 PCs, mostly fresh installs, **Smart App Control** is on. It blocks programs that aren't signed and that Microsoft hasn't seen often enough. BrainWashed runs models with [llama.cpp](https://github.com/ggml-org/llama.cpp), whose Windows builds aren't signed and change several times a day, so Smart App Control can stop it. Loading a model then fails with:
+
+```
+llama-server exited with exit code: 0xc0e90002 while loading the model
+```
+
+To check, open **Windows Security > App & browser control > Smart App Control settings**. If it says **On**, switch it to **Off** and load the model again. To see exactly what was blocked, run this in PowerShell:
+
+```powershell
+Get-WinEvent -LogName "Microsoft-Windows-CodeIntegrity/Operational" -MaxEvents 100 |
+  Where-Object Id -in 3033,3077 | Select-Object -First 5 TimeCreated, Message | Format-List
+```
+
+If you'd rather keep Smart App Control on, you can still chat through a [cloud model](../README.md#cloud-models). Those don't run llama.cpp on your computer.
+
 ## Uninstalling
 
 Run `brainwashed service uninstall` if you used it, then delete the binary (`~/.local/bin/brainwashed`, or `%LOCALAPPDATA%\Programs\BrainWashed` on Windows). Models, skills, devices and settings stay in the data folder until you delete it:
