@@ -1,6 +1,6 @@
 [package]
 name = "brainwashed-cli"
-version = "0.0.0"
+version = "0.1.0"
 description = "Runs BrainWashed from a terminal: models, chat, and the web chat for phones, without the desktop app."
 edition.workspace = true
 license.workspace = true
