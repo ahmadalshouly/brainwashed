@@ -1,6 +1,6 @@
 [package]
 name = "brainwashed-cli"
-version = "0.3.0"
+version = "0.3.1"
 description = "The BrainWashed host: runs models, serves the web app with chat and admin pages, and makes this computer reachable from anywhere."
 edition.workspace = true
 license.workspace = true

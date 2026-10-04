@@ -206,7 +206,8 @@ fn explain_exit(code: i32) -> Option<&'static str> {
         0xC0E9_0002 => Some(
             " Windows blocked llama.cpp's files because they aren't signed. This is Smart App \
              Control (Windows Security > App & browser control) or a company policy. Turn it off, \
-             or use a cloud model instead.",
+             or use a cloud model instead. See \
+             https://github.com/ahmadalshouly/brainwashed/blob/main/docs/install.md#windows-smart-app-control",
         ),
         // STATUS_INVALID_IMAGE_HASH
         0xC000_0428 => {

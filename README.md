@@ -13,6 +13,8 @@ BrainWashed is one command, `brainwashed`. It runs open source language models o
 
 It starts right away and opens the admin page. Later, run `brainwashed`. [docs/install.md](docs/install.md) lists every command, including `brainwashed service install` to keep it running in the background.
 
+On Windows 11, if loading a model fails with `0xc0e90002`, Smart App Control is blocking llama.cpp: see [Windows Smart App Control](docs/install.md#windows-smart-app-control).
+
 ## Repository layout
 
 | Path | What it is |

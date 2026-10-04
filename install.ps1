@@ -51,6 +51,14 @@ if (($userPath -split ";") -notcontains $dir) {
 }
 $env:Path = "$env:Path;$dir"
 
+# Smart App Control blocks llama.cpp's unsigned files, so models won't load.
+$sac = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy" -ErrorAction SilentlyContinue).VerifiedAndReputablePolicyState
+if ($sac -eq 1) {
+    Write-Host "Smart App Control is on. It blocks llama.cpp, so local models may fail to load (0xc0e90002)." -ForegroundColor Yellow
+    Write-Host "Turn it off in Windows Security > App & browser control, or use a cloud model." -ForegroundColor Yellow
+    Write-Host "See https://github.com/$repo/blob/main/docs/install.md#windows-smart-app-control" -ForegroundColor Yellow
+}
+
 Write-Host "Installed. Run 'brainwashed --help' to see what it can do."
 if (-not $env:BRAINWASHED_NO_START) {
     & (Join-Path $dir "brainwashed.exe")
