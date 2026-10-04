@@ -143,6 +143,21 @@ jobs:
             target/release/brainwashed.exe
           if-no-files-found: error
 
+  install-script:
+    name: Install script (Windows PowerShell 5.1)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Installs the newest published release, as a user's `irm | iex` would.
+      - name: Install from the latest release
+        shell: powershell
+        env:
+          BRAINWASHED_NO_START: "1"
+        run: |
+          Get-Content -Raw install.ps1 | Invoke-Expression
+          & "$env:LOCALAPPDATA\Programs\BrainWashed\brainwashed.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
   host:
     name: Host app (${{ matrix.platform }})
     needs: [js, rust]
