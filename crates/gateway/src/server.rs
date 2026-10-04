@@ -844,9 +844,12 @@ fn stream_frames(
         line.push(b'\n');
         Ok::<_, std::convert::Infallible>(line)
     });
+    // no-transform keeps tunnels and proxies from compressing the stream, which
+    // holds the words back until enough of them pile up.
     Response::builder()
         .header(header::CONTENT_TYPE, "application/x-ndjson")
-        .header(header::CACHE_CONTROL, "no-store")
+        .header(header::CACHE_CONTROL, "no-store, no-transform")
+        .header("x-accel-buffering", "no")
         .body(Body::from_stream(body))
         .unwrap()
 }
