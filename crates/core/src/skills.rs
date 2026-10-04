@@ -1,6 +1,7 @@
 //! Skills on the engine: loading, hot reload, enabling, and adding the
 //! relevant ones to each chat prompt.
 
+use crate::community::{read_origin, sha256_hex, SkillOrigin};
 use crate::engine::Event;
 use crate::{Engine, Error, Result};
 use brainwashed_runtime::chat::Delta;
@@ -12,7 +13,7 @@ use std::time::Duration;
 
 /// Longest skill body sent to the model. Small models lose track of long
 /// instructions, so anything beyond this is cut.
-pub const MAX_SKILL_CHARS: usize = 6000;
+pub const MAX_SKILL_CHARS: usize = brainwashed_skills::MAX_BODY_CHARS;
 
 /// Skills that ship with BrainWashed. They are installed on every start
 /// when missing, and replaced when this version of BrainWashed carries a
@@ -101,12 +102,17 @@ impl From<Delta> for ChatEvent {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillInfo {
     #[serde(flatten)]
     pub entry: SkillEntry,
     pub enabled: bool,
     /// Ships with BrainWashed: it can be turned off but not deleted.
     pub builtin: bool,
+    /// Where it was installed from, for skills that weren't written here.
+    pub origin: Option<SkillOrigin>,
+    /// Changed on this computer since it was installed.
+    pub modified: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -184,10 +190,18 @@ impl Engine {
                 .registry
                 .entries()
                 .into_iter()
-                .map(|entry| SkillInfo {
-                    enabled: !disabled.contains(&entry.skill.name),
-                    builtin: is_builtin(&entry),
-                    entry,
+                .map(|entry| {
+                    let origin = read_origin(&entry.path);
+                    let modified = origin.as_ref().is_some_and(|o| {
+                        std::fs::read(&entry.path).is_ok_and(|b| sha256_hex(&b) != o.sha256)
+                    });
+                    SkillInfo {
+                        enabled: !disabled.contains(&entry.skill.name),
+                        builtin: is_builtin(&entry),
+                        entry,
+                        origin,
+                        modified,
+                    }
                 })
                 .collect(),
             errors: state.registry.errors().to_vec(),

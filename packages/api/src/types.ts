@@ -118,6 +118,48 @@ export interface SkillInfo extends SkillSummary {
   path: string;
   /** Ships with BrainWashed: it can be turned off but not deleted. */
   builtin?: boolean;
+  /** Where it was installed from; missing for skills written on the host. */
+  origin?: SkillOrigin | null;
+  /** Changed on the host since it was installed. */
+  modified?: boolean;
+}
+
+/** Where an installed skill came from. Mirrors `SkillOrigin` in crates/core. */
+export interface SkillOrigin {
+  url: string;
+  sha256: string;
+  /** Installed from the community index rather than a link. */
+  community: boolean;
+  /** Seconds since 1970. */
+  installedAt: number;
+}
+
+/** A skill in the community index. Mirrors `CommunitySkill` in crates/core. */
+export interface CommunitySkill {
+  name: string;
+  description: string;
+  triggers: string[];
+  version: number;
+  author?: string | null;
+  category?: string | null;
+  /** The SKILL.md, pinned to the commit it was reviewed at. */
+  url: string;
+  sha256: string;
+  page?: string | null;
+}
+
+/** A skill downloaded for reading before it's installed. */
+export interface SkillPreview {
+  name: string;
+  description: string;
+  source: string;
+  url: string;
+  sha256: string;
+  community: boolean;
+  /** Lines worth a close look, e.g. ones that try to override instructions. */
+  warnings: string[];
+  /** A skill with this name is already installed. */
+  installed: boolean;
 }
 
 export interface SkillList {
@@ -253,6 +295,8 @@ export interface HostSettings {
   check_for_updates: boolean;
   /** Model settings for every chat, from every device. A chat's own options win. */
   chat_defaults: ChatOptions;
+  /** Community skill index to browse; null uses the BrainWashed registry. */
+  skill_index: string | null;
 }
 
 export interface Hardware {

@@ -44,6 +44,8 @@ pub struct Settings {
     /// Model settings for every chat, from every device. A chat can still
     /// set its own; anything left out uses the model's defaults.
     pub chat_defaults: SamplingOptions,
+    /// Community skill index to browse. None uses the BrainWashed registry.
+    pub skill_index: Option<String>,
 }
 
 /// Ways to reach the host from outside the local network with no server of
@@ -82,6 +84,7 @@ impl Default for Settings {
             cloudflared_path: None,
             check_for_updates: true,
             chat_defaults: SamplingOptions::default(),
+            skill_index: None,
         }
     }
 }

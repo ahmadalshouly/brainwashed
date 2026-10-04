@@ -14,6 +14,7 @@ pdf-extract = "0.12"
 reqwest = { version = "0.13", features = ["json", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 thiserror = "2"
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "sync", "time"] }
@@ -22,4 +23,5 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 axum = "0.8"
+sha2 = "0.10"
 tempfile = "3"
