@@ -106,8 +106,9 @@ impl LlamaServer {
             if let Some(status) = self.child.try_wait()? {
                 // Give the log readers a moment to drain the pipes.
                 tokio::time::sleep(Duration::from_millis(100)).await;
+                let why = status.code().and_then(explain_exit).unwrap_or("");
                 return Err(Error::other(format!(
-                    "llama-server exited with {status} while loading the model:\n{}",
+                    "llama-server exited with {status} while loading the model.{why}\n{}",
                     self.log_tail(20)
                 )));
             }
@@ -197,6 +198,34 @@ async fn capture(stream: impl tokio::io::AsyncRead + Unpin, log: Arc<Mutex<VecDe
     }
 }
 
+/// Plain words for Windows crash codes that come from the computer rather
+/// than the model, so people know what to change.
+fn explain_exit(code: i32) -> Option<&'static str> {
+    match code as u32 {
+        // STATUS_SYSTEM_INTEGRITY_POLICY_VIOLATION
+        0xC0E9_0002 => Some(
+            " Windows blocked llama.cpp's files because they aren't signed. This is Smart App \
+             Control (Windows Security > App & browser control) or a company policy. Turn it off, \
+             or use a cloud model instead.",
+        ),
+        // STATUS_INVALID_IMAGE_HASH
+        0xC000_0428 => {
+            Some(" Windows refused llama.cpp's files because their signature couldn't be checked.")
+        }
+        // STATUS_DLL_NOT_FOUND
+        0xC000_0135 => Some(
+            " A file llama.cpp needs is missing. Delete the runtime folder in the data folder so \
+             it downloads again, or install the Microsoft Visual C++ Redistributable.",
+        ),
+        // STATUS_ILLEGAL_INSTRUCTION
+        0xC000_001D => Some(
+            " This processor lacks an instruction the llama.cpp build uses. Try the CPU backend \
+             in Settings.",
+        ),
+        _ => None,
+    }
+}
+
 fn free_port() -> Result<u16> {
     Ok(std::net::TcpListener::bind("127.0.0.1:0")?
         .local_addr()?
@@ -209,4 +238,19 @@ fn prepend_env(var: &str, dir: &Path) -> std::ffi::OsString {
         paths.extend(std::env::split_paths(&existing));
     }
     std::env::join_paths(paths).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::explain_exit;
+
+    #[test]
+    fn explains_windows_crash_codes() {
+        // Windows reports NTSTATUS exit codes as negative i32s.
+        assert!(explain_exit(0xC0E9_0002_u32 as i32)
+            .unwrap()
+            .contains("Smart App Control"));
+        assert!(explain_exit(0xC000_001D_u32 as i32).is_some());
+        assert_eq!(explain_exit(1), None);
+    }
 }
