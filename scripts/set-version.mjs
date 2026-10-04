@@ -17,19 +17,10 @@ const edit = (path, fn) => {
   console.log(`${path} -> ${version}`);
 };
 
-for (const path of [
-  "apps/host/package.json",
-  "apps/web/package.json",
-  "packages/api/package.json",
-  "apps/host/src-tauri/tauri.conf.json",
-]) {
+for (const path of ["apps/web/package.json", "packages/api/package.json"]) {
   edit(path, (s) => s.replace(/("version":\s*")[^"]+(")/, `$1${version}$2`));
 }
-for (const path of [
-  "apps/host/src-tauri/Cargo.toml",
-  "crates/cli/Cargo.toml",
-  "crates/relay/Cargo.toml",
-]) {
+for (const path of ["crates/cli/Cargo.toml", "crates/relay/Cargo.toml"]) {
   edit(path, (s) => s.replace(/^version = "[^"]+"/m, `version = "${version}"`));
 }
 console.log("Now run `cargo check` to refresh Cargo.lock, commit, and tag v" + version + ".");

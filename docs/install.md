@@ -1,56 +1,56 @@
 # Installing BrainWashed
 
-Download the installer for your computer from the [latest release](https://github.com/ahmadalshouly/brainwashed/releases).
-
-| Your computer | File to download |
-|---|---|
-| Mac with Apple silicon (M1 or later) | `BrainWashed_<version>_aarch64.dmg` |
-| Mac with an Intel processor | `BrainWashed_<version>_x64.dmg` |
-| Windows 10 or 11 | `BrainWashed_<version>_x64-setup.exe` (or the `.msi`) |
-| Ubuntu, Debian, Mint | `brainwashed_<version>_amd64.deb` |
-| Fedora, openSUSE | `BrainWashed-<version>-1.x86_64.rpm` |
-| Any other Linux | `BrainWashed_<version>_amd64.AppImage` |
-
-Not sure which Mac you have? Apple menu > About This Mac: "Chip: Apple M…" means Apple silicon.
-
-## Or install from a terminal
-
-The command-line version does everything except show a window: it downloads a model, serves the web chat to your browser and your phone, and lets you chat in the terminal.
+BrainWashed is one command, `brainwashed`. Install it with one line:
 
 - **Windows** (PowerShell): `irm https://raw.githubusercontent.com/ahmadalshouly/brainwashed/main/install.ps1 | iex`
 - **macOS and Linux**: `curl -fsSL https://raw.githubusercontent.com/ahmadalshouly/brainwashed/main/install.sh | sh`
 
-It starts right away. The first run downloads a small model that fits your computer and opens the chat in your browser; scan the QR code in the terminal to use it from your phone. Later, run `brainwashed` again, or `brainwashed --help` for the other commands (`chat`, `models`, `pull`, `use`, `skills`). It shares models, skills and paired devices with the desktop app, so run one or the other.
+Builds exist for Windows (x64, and Arm through emulation), macOS (Apple silicon and Intel) and Linux (x64 and Arm). Run the same line again to update.
 
 ## First start
 
-1. Open BrainWashed. The **Models** tab suggests models that fit your computer's memory.
-2. Pick one and click **Download**. A 2-4 GB model takes a few minutes on a typical connection. BrainWashed also downloads the matching llama.cpp runtime for your hardware the first time.
-3. When the model is loaded, open **Chat**.
+The installer starts BrainWashed right away. Later, run `brainwashed` in any terminal. It:
+
+1. Opens the **admin page** in its own browser window. This computer's browser is an admin automatically.
+2. Downloads a small model that fits your computer the first time, and the matching llama.cpp runtime. A 2-4 GB model takes a few minutes. The **Models** page shows progress and suggests others.
+3. Opens a free, secure tunnel so phones and other computers can reach it **from anywhere**, with no router setup. The terminal and the **Remote access** page show the address.
+
+Then open **Chat**, or press Enter in the terminal for a QR code to scan with your phone.
 
 You need about 8 GB of memory for small models (1-4B parameters), 16 GB for 7-8B models.
 
-## Until the installers are signed
+## Commands
 
-Early releases may not be signed with an Apple or Microsoft certificate yet, so your computer warns you the first time:
+| Command | What it does |
+|---|---|
+| `brainwashed` | Start, or open the admin page if it's already running |
+| `brainwashed open` | Open the admin page of the running BrainWashed |
+| `brainwashed status` | Is it running, which model, which addresses |
+| `brainwashed stop` | Stop it |
+| `brainwashed service install` | Start it in the background whenever you log in |
+| `brainwashed service uninstall` | Stop doing that |
+| `brainwashed remote quick \| cloudflare <token> <url> \| url <url> \| relay <url> \| off` | How devices reach it from anywhere ([remote-access.md](remote-access.md)) |
+| `brainwashed chat` | Chat in the terminal |
+| `brainwashed models`, `pull <model>`, `use <model>` | Manage models from the terminal |
+| `brainwashed skills` | List skills and show their folder |
 
-- **macOS:** "BrainWashed can't be opened because Apple cannot check it for malicious software." Open System Settings > Privacy & Security, scroll down and click **Open Anyway** next to BrainWashed. You only need to do this once.
-- **Windows:** SmartScreen says "Windows protected your PC". Click **More info**, then **Run anyway**.
-- **Linux:** make the AppImage executable (`chmod +x BrainWashed_*.AppImage`) before running it.
+Options: `--port <port>` (default 47860), `--no-browser`, `--local-only` (no tunnel this time), `--data-dir <dir>`.
+
+## Keep it running
+
+`brainwashed service install` registers BrainWashed to start at login and starts it now: a systemd user service on Linux, a launch agent on macOS, a scheduled task on Windows. Open the admin page any time with `brainwashed open`. On Linux, `sudo loginctl enable-linger $USER` keeps it running while you're logged out, which suits a home server.
 
 ## Updates
 
-BrainWashed checks GitHub for new releases when it starts and shows **Version X is available** at the bottom of the sidebar. Click it to open the download page. It sends nothing about you or your computer; you can turn the check off with the **Check for updates** box.
+BrainWashed checks GitHub for new releases and the admin page's **Overview** says when one is out. To update, run the install line again. Turn the check off in **Settings**; it sends nothing about you or your computer.
 
-## Using it from other devices
+## Windows firewall
 
-- At home: open **Devices** and pair a phone or another computer with the QR code. See the [README](../README.md#using-it-from-your-phone-or-another-computer).
-- On Windows, the first time you turn on **Allow phones and browsers on this network**, Windows Firewall asks whether BrainWashed may use the network. Tick **Private networks** and click **Allow access**. Your Wi-Fi must also be set to a private network (Settings > Network & internet > Wi-Fi > your network > **Private network**), or phones can't connect.
-- Away from home: set up a relay. See [relay.md](relay.md).
+The first time BrainWashed serves, Windows may ask whether it may use the network. Allow **Private networks** so phones on your Wi-Fi can connect directly. Remote access through the tunnel works either way.
 
 ## Uninstalling
 
-Remove the app as usual for your system. Your models, skills and settings stay in the app data folder until you delete it:
+Run `brainwashed service uninstall` if you used it, then delete the binary (`~/.local/bin/brainwashed`, or `%LOCALAPPDATA%\Programs\BrainWashed` on Windows). Models, skills, devices and settings stay in the data folder until you delete it:
 
 - macOS: `~/Library/Application Support/org.brainwashed.host`
 - Windows: `%APPDATA%\org.brainwashed.host`

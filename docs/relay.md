@@ -1,6 +1,8 @@
 # Relay: using BrainWashed away from home
 
-At home, devices talk to your computer directly on the local network. Away from home they can't: your router blocks incoming connections, and your computer's address changes. The relay solves this with no router setup.
+At home, devices talk to your computer directly on the local network. Away from home they can't: your router blocks incoming connections, and your computer's address changes.
+
+Most people don't need a relay: BrainWashed's built-in tunnel already makes the computer reachable from anywhere ([remote-access.md](remote-access.md)). The relay is for running that piece on infrastructure you control, for the phone apps. It works with no router setup either.
 
 ## How it works
 
@@ -8,7 +10,7 @@ At home, devices talk to your computer directly on the local network. Away from 
 2. The relay sends a random challenge. The computer seals it with its secret key, which proves it owns its public key. Nobody else can register under that key.
 3. A paired device sends the same requests it sends at home, to `https://<relay>/h/<host key>/pair`, `/rpc` or `/hello`. The relay passes each one down the WebSocket and streams the answer back.
 
-The relay only forwards those three paths. It does not serve the web chat, because a page delivered through the relay could be altered by whoever runs it. Away from home, use the BrainWashed app.
+The relay only forwards those three paths. It does not serve the web app, because a page delivered through the relay could be altered by whoever runs it. Away from home, browsers use the tunnel or your own address ([remote-access.md](remote-access.md)); the apps can use the relay.
 
 ## What the relay can and can't see
 
@@ -53,8 +55,8 @@ Avoid proxies that buffer responses (for example, turn off `proxy_buffering` in 
 
 ## Using it
 
-1. On the computer: **Devices**, then **Away from home**. Enter the relay's address, for example `https://relay.example.org`, and save. The status line shows when it's connected.
-2. Pair the BrainWashed app as usual, on the same Wi-Fi. The pairing code now includes the relay address.
+1. On the admin page: **Remote access**, then **Self-hosted relay**. Enter the relay's address, for example `https://relay.example.org`, and save. Or run `brainwashed remote relay https://relay.example.org`. The status line shows when it's connected.
+2. Pair the BrainWashed app as usual with a code from **Devices**. The code now includes the relay address.
 3. Away from home, the app tries your computer's local addresses first, then the relay.
 
 Devices paired before you set a relay don't know about it. Pair them again.
@@ -63,4 +65,4 @@ Devices paired before you set a relay don't know about it. Pair them again.
 
 - Each computer can have 64 requests in flight through a relay; more are refused with 429.
 - Request bodies are capped at 8 MB.
-- A computer that is asleep or has device access off shows as offline (503).
+- A computer that is asleep or isn't running BrainWashed shows as offline (503).

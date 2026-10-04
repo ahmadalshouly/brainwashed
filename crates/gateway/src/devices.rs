@@ -1,4 +1,4 @@
-//! Phones that have been paired with this host.
+//! Devices (phones and browsers) that have been paired with this host.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -14,6 +14,26 @@ pub struct Device {
     /// Unix seconds.
     pub paired_at: u64,
     pub last_seen: Option<u64>,
+    /// Devices paired before roles existed were paired by the owner at the
+    /// computer, so they are admins.
+    #[serde(default = "DeviceRole::admin")]
+    pub role: DeviceRole,
+}
+
+/// What a paired device may do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DeviceRole {
+    /// Everything: models, skills, settings, devices and remote access.
+    Admin,
+    /// Chat, and see which model and skills are in use.
+    Member,
+}
+
+impl DeviceRole {
+    fn admin() -> Self {
+        DeviceRole::Admin
+    }
 }
 
 pub struct DeviceStore {
@@ -64,6 +84,28 @@ impl DeviceStore {
             self.save(&devices)?;
         }
         Ok(removed)
+    }
+
+    /// Changes a device's role. Returns false if there is no such device.
+    pub fn set_role(&self, id: &str, role: DeviceRole) -> std::io::Result<bool> {
+        let mut devices = self.devices.write().unwrap();
+        let Some(d) = devices.iter_mut().find(|d| d.id == id) else {
+            return Ok(false);
+        };
+        d.role = role;
+        self.save(&devices)?;
+        Ok(true)
+    }
+
+    /// Renames a device. Returns false if there is no such device.
+    pub fn rename(&self, id: &str, name: &str) -> std::io::Result<bool> {
+        let mut devices = self.devices.write().unwrap();
+        let Some(d) = devices.iter_mut().find(|d| d.id == id) else {
+            return Ok(false);
+        };
+        d.name = name.chars().take(64).collect();
+        self.save(&devices)?;
+        Ok(true)
     }
 
     /// Records activity in memory; persisted with the next change.

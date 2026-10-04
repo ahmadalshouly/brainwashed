@@ -1,6 +1,6 @@
 use brainwashed_core::{Engine, EngineConfig};
 use brainwashed_gateway::crypto::{parse_public_key, Envelope, HostKeys};
-use brainwashed_gateway::Gateway;
+use brainwashed_gateway::{DeviceRole, Gateway};
 use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -110,7 +110,7 @@ async fn setup() -> (Gateway, String, u16, tempfile::TempDir) {
     let engine = Engine::new(EngineConfig::new(dir.path(), "0.1.0")).unwrap();
     let gw = Gateway::new(engine, dir.path()).unwrap();
     let port = gw.start(0).await.unwrap().port();
-    let offer = gw.create_pairing_offer().unwrap();
+    let offer = gw.create_pairing_offer(DeviceRole::Admin).unwrap();
     (gw, offer.url, port, dir)
 }
 
@@ -216,7 +216,7 @@ async fn offers_need_a_running_gateway_and_stop_works() {
     let dir = tempfile::tempdir().unwrap();
     let engine = Engine::new(EngineConfig::new(dir.path(), "0.1.0")).unwrap();
     let gw = Gateway::new(engine, dir.path()).unwrap();
-    assert!(gw.create_pairing_offer().is_err());
+    assert!(gw.create_pairing_offer(DeviceRole::Admin).is_err());
     let addr = gw.start(0).await.unwrap();
     assert!(gw.status().running);
     gw.stop();
@@ -235,7 +235,7 @@ async fn offers_need_a_running_gateway_and_stop_works() {
 #[tokio::test]
 async fn serves_the_web_chat_with_a_browser_pairing_link() {
     let (gw, url, port, _dir) = setup().await;
-    let offer = gw.create_pairing_offer().unwrap();
+    let offer = gw.create_pairing_offer(DeviceRole::Admin).unwrap();
     // Same details as the app link, in the fragment so they stay in the browser.
     let (base, fragment) = offer.web_url.split_once("#pair?").unwrap();
     assert!(base.starts_with("http://") && base.ends_with(&format!(":{port}/")));
@@ -292,7 +292,7 @@ async fn works_through_the_relay() {
     wait_for_relay(&gw).await;
 
     // The pairing link tells devices where the relay is.
-    let url = gw.create_pairing_offer().unwrap().url;
+    let url = gw.create_pairing_offer(DeviceRole::Admin).unwrap().url;
     let r = query(&url, "r").replace("%3A", ":").replace("%2F", "/");
     assert_eq!(r, relay_url);
     let host_key = query(&url, "k");
@@ -358,5 +358,146 @@ async fn relay_settings_are_checked() {
     assert_eq!(gw.status().relay.unwrap().url, "https://relay.example.org");
     gw.set_relay_url(None).unwrap();
     assert!(gw.status().relay.is_none());
-    assert!(!gw.create_pairing_offer().unwrap().url.contains("&r="));
+    assert!(!gw
+        .create_pairing_offer(DeviceRole::Admin)
+        .unwrap()
+        .url
+        .contains("&r="));
+}
+
+#[tokio::test]
+async fn members_chat_and_admins_manage() {
+    let (_gw, admin_url, port, dir) = setup().await;
+    let mut admin = Phone::from_offer(&admin_url, port);
+    let reply = admin.pair(&query(&admin_url, "t")).await.unwrap();
+    assert_eq!(reply["role"], "admin");
+
+    // An admin invites a member.
+    let invite = admin
+        .call("createPairingOffer", json!({ "role": "member" }))
+        .await;
+    let member_url = invite["ok"]["url"].as_str().unwrap().to_string();
+    assert_eq!(invite["ok"]["role"], "member");
+    let mut member = Phone::from_offer(&member_url, port);
+    assert_eq!(
+        member.pair(&query(&member_url, "t")).await.unwrap()["role"],
+        "member"
+    );
+
+    // Members can chat and look, not change things.
+    assert_eq!(
+        member.call("whoami", Value::Null).await["ok"]["role"],
+        "member"
+    );
+    assert!(member.call("models", Value::Null).await["ok"].is_array());
+    for (method, params) in [
+        ("settings", Value::Null),
+        ("devices", Value::Null),
+        ("deleteSkill", json!({ "name": "meal-planner" })),
+        ("loadModel", json!({ "id": "x" })),
+    ] {
+        let denied = member.call(method, params).await;
+        assert!(
+            denied["error"].as_str().unwrap().contains("Only admins"),
+            "{method}: {denied}"
+        );
+    }
+
+    // Admins manage skills, settings and devices.
+    let source = admin
+        .call("skillSource", json!({ "name": "meal-planner" }))
+        .await;
+    assert!(source["ok"].as_str().unwrap().contains("name:"));
+    let settings = admin
+        .call(
+            "updateSettings",
+            json!({ "settings": { "host_name": "Office AI", "remote_access": "off" } }),
+        )
+        .await;
+    assert_eq!(settings["ok"]["host_name"], "Office AI", "{settings}");
+    assert_eq!(settings["ok"]["tunnel_token"], Value::Null);
+    let devices = admin.call("devices", Value::Null).await;
+    let devices = devices["ok"].as_array().unwrap();
+    assert_eq!(devices.len(), 2);
+    let member_id = devices.iter().find(|d| d["role"] == "member").unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    admin
+        .call("setDeviceRole", json!({ "id": member_id, "role": "admin" }))
+        .await;
+    assert!(member.call("settings", Value::Null).await["ok"].is_object());
+
+    // The last admin can't be demoted.
+    let me = admin.device_id.clone().unwrap();
+    admin
+        .call(
+            "setDeviceRole",
+            json!({ "id": member_id, "role": "member" }),
+        )
+        .await;
+    let refused = admin
+        .call("setDeviceRole", json!({ "id": me, "role": "member" }))
+        .await;
+    assert!(refused["error"]
+        .as_str()
+        .unwrap()
+        .contains("at least one admin"));
+
+    // Changes are in the audit log, newest first.
+    let log = admin.call("auditLog", json!({ "limit": 50 })).await;
+    let actions: Vec<&str> = log["ok"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["action"].as_str().unwrap())
+        .collect();
+    assert_eq!(actions[0], "setDeviceRole");
+    assert!(actions.contains(&"updateSettings"));
+    assert!(actions.contains(&"pair"));
+    drop(dir);
+}
+
+#[tokio::test]
+async fn the_terminal_gets_admin_links_with_its_token() {
+    let (gw, _url, port, dir) = setup().await;
+    let token = std::fs::read_to_string(Gateway::control_token_path(dir.path())).unwrap();
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let link = |auth: Option<String>| {
+        let mut req = http.post(format!("http://127.0.0.1:{port}/control/admin-link"));
+        if let Some(a) = auth {
+            req = req.header("Authorization", a);
+        }
+        req.send()
+    };
+    assert_eq!(link(None).await.unwrap().status(), 401);
+    assert_eq!(
+        link(Some("Bearer wrong".into())).await.unwrap().status(),
+        401
+    );
+    let offer: Value = link(Some(format!("Bearer {token}")))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(offer["role"], "admin");
+    assert!(offer["query"].as_str().unwrap().contains("t="));
+
+    gw.stop();
+    assert!(!Gateway::control_token_path(dir.path()).exists());
+}
+
+#[tokio::test]
+async fn pairing_links_carry_the_public_address() {
+    let (gw, _url, _port, _dir) = setup().await;
+    gw.set_public_url(Some("https://ai.example.org/")).unwrap();
+    let offer = gw.create_pairing_offer(DeviceRole::Member).unwrap();
+    assert_eq!(query(&offer.url, "u"), "https%3A%2F%2Fai.example.org");
+    assert!(offer.web_url.starts_with("https://ai.example.org/#pair?"));
+    assert_eq!(
+        gw.status().public_url.as_deref(),
+        Some("https://ai.example.org")
+    );
+    assert!(gw.set_public_url(Some("ai.example.org")).is_err());
 }

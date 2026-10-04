@@ -1,7 +1,7 @@
 [package]
 name = "brainwashed-gateway"
 version = "0.0.0"
-description = "Lets paired phones talk to the BrainWashed engine over the local network."
+description = "Serves the BrainWashed web app and lets paired devices reach the engine from anywhere."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -16,12 +16,14 @@ crypto_box = { version = "0.9", features = ["std", "getrandom"] }
 futures-util = "0.3"
 http = "1"
 if-addrs = "0.15"
+qrcode = { version = "0.14", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "logging", "std", "tls12"] }
+reqwest = { version = "0.13", features = ["json", "stream"] }
 rust-embed = { version = "8", features = ["mime-guess"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-stream = "0.1"
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 tower = { version = "0.5", features = ["util"] }
@@ -30,5 +32,4 @@ webpki-roots = "1"
 
 [dev-dependencies]
 base64 = "0.22"
-reqwest = { version = "0.13", features = ["json", "stream"] }
 tempfile = "3"

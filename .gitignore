@@ -6,6 +6,5 @@ target/
 .env
 .env.*
 !.env.example
-apps/host/src-tauri/gen/
 __pycache__/
 *.pyc

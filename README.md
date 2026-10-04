@@ -1,25 +1,28 @@
 # BrainWashed
 
-Turn your laptop into a private AI server, and talk to it from your phone or any browser.
+Turn your laptop into a private AI server, and use it from your phone or any browser, anywhere.
 
-BrainWashed runs open source language models on your own computer (macOS, Windows, Linux), lets you teach it new abilities by dropping in a markdown **skill** file, and serves a web chat so you can use it from your phone or any other device in a browser. Optional iOS/Android apps connect to the same host. Your conversations never leave hardware you own.
+BrainWashed is one command, `brainwashed`. It runs open source language models on your own computer (macOS, Windows, Linux), lets you teach it new abilities by dropping in a markdown **skill** file, and serves a web app: chat for everyone, and admin pages to manage models, skills, devices, remote access and settings. A built-in secure tunnel makes it reachable from anywhere with no router setup. Optional iOS/Android apps connect to the same host. Your conversations stay end-to-end encrypted between your devices and hardware you own.
 
-> **Status:** pre-release. The desktop host, skills, the web chat, pairing other devices and access away from home through a relay all work; installers are built for every release but not yet signed. See [install.md](docs/install.md) to try it, and the [architecture and roadmap](docs/architecture.md) for what's next.
+> **Status:** pre-release. See [install.md](docs/install.md) to try it, and the [architecture and roadmap](docs/architecture.md) for what's next.
 
 ## Install
 
-Download BrainWashed for macOS, Windows or Linux from the [releases page](https://github.com/ahmadalshouly/brainwashed/releases). [docs/install.md](docs/install.md) explains which file to pick and how to get past the warning for unsigned installers.
+- **Windows** (PowerShell): `irm https://raw.githubusercontent.com/ahmadalshouly/brainwashed/main/install.ps1 | iex`
+- **macOS and Linux**: `curl -fsSL https://raw.githubusercontent.com/ahmadalshouly/brainwashed/main/install.sh | sh`
+
+It starts right away and opens the admin page. Later, run `brainwashed`. [docs/install.md](docs/install.md) lists every command, including `brainwashed service install` to keep it running in the background.
 
 ## Repository layout
 
 | Path | What it is |
 |---|---|
-| `apps/host` | Desktop host app (Tauri 2: Rust core + React UI) |
-| `apps/web` | Web chat the host serves to browsers on your network |
+| `crates/cli` | The `brainwashed` command: the host |
+| `apps/web` | The web app the host serves: chat and admin pages |
 | `packages/api` | TypeScript types and client for the host's client protocol |
-| `crates/cli` | `brainwashed` command: the host without a window, for terminals and servers |
+| `crates/core` | The engine: models, llama.cpp runtime, skills and chat |
 | `crates/skills` | Parser and loader for `SKILL.md` files |
-| `crates/gateway` | The host's encrypted API for paired devices, and its relay connection |
+| `crates/gateway` | The host's server: encrypted API for paired devices, roles, audit log, tunnel and relay connection |
 | `crates/relay` | Relay server for using BrainWashed away from home ([docs](docs/relay.md)) |
 | `skills-examples` | Example skills |
 | `model` | Fine-tuning scripts and evals for the BrainWashed model |
@@ -27,12 +30,12 @@ Download BrainWashed for macOS, Windows or Linux from the [releases page](https:
 
 ## Getting started
 
-Prerequisites: Node 20+, pnpm 10, Rust (stable), and the [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/) for your OS.
+Prerequisites: Node 20+, pnpm 10 and Rust (stable).
 
 ```sh
 pnpm install
-pnpm host:dev        # run the desktop host
-pnpm web:build       # build the web chat the host serves (rebuild the host after)
+pnpm web:build       # build the web app; debug builds of the host read it from disk
+pnpm dev             # run the host (cargo run -p brainwashed-cli); add -- --help for options
 pnpm typecheck && pnpm test && cargo test --workspace
 ```
 
@@ -52,28 +55,26 @@ When the user wants an email written:
 
 How it works:
 
-- Skills live in the app's data folder under `skills/`, one subfolder per skill. Edit them in the app's Skills tab or in any text editor; changes apply within seconds.
+- Skills live in the data folder under `skills/`, one subfolder per skill (`brainwashed skills` shows where). Edit them on the admin page's **Skills** page or in any text editor; changes apply within seconds.
 - Every enabled skill's `name` and `description` go into the system prompt as a short index.
 - For each message the host picks at most two relevant skills and adds their full instructions. A `triggers` phrase in the message always selects a skill; otherwise skills are matched by the distinctive words they share with the message (and the previous message, so follow-ups keep their skill).
 - Skills are never trained into the model, so a new skill works on the next message.
 
-See [`skills-examples`](skills-examples) for the skills that ship with the app.
+See [`skills-examples`](skills-examples) for the skills that ship with BrainWashed.
 
-## Using it from your phone or another computer
+## Using it from your phone, another computer, or your team
 
-No app is required: the host serves a web chat that works in any browser on your network.
+No app is required: any browser works, at home or away.
 
-1. On the computer, open **Devices**, turn on **Allow phones and browsers on this network**, then click **Pair a device**.
-2. Scan the QR code with your phone's camera. It opens the chat in the browser and pairs it. On another computer, open the link shown under the code.
-3. Chat and switch models from that browser. It stays paired until you remove it under **Devices**.
+1. On the admin page, open **Devices** and click **Show code**. Pick **member** (chat only) or **admin**.
+2. Scan the QR code with the phone's camera, or open the link on another computer. It opens BrainWashed in the browser and connects it.
+3. It stays connected until you remove it under **Devices**. The **Activity** page records who connected and every change admins make.
 
-The optional BrainWashed iOS and Android apps, sold separately, scan the same QR code and add more on top. Anyone can build their own client: the protocol is documented and versioned in [docs/client-protocol.md](docs/client-protocol.md), and `@brainwashed/api` implements it in TypeScript.
+By default the code carries a free Cloudflare tunnel address, so it works from anywhere. For an address that never changes, use your own domain, Tailscale or a reverse proxy; see [docs/remote-access.md](docs/remote-access.md).
 
-Messages are end-to-end encrypted with keys exchanged through the QR code.
+The optional BrainWashed iOS and Android apps, sold separately, scan the same code. Anyone can build their own client: the protocol is documented and versioned in [docs/client-protocol.md](docs/client-protocol.md), and `@brainwashed/api` implements it in TypeScript.
 
-### Away from home
-
-Under **Devices > Away from home**, point the computer at a relay. Paired apps then keep working on any network, with no router setup, and the relay only ever sees encrypted traffic. You can run your own relay with one Docker command; see [docs/relay.md](docs/relay.md). The web chat stays on your home network.
+Messages are end-to-end encrypted with keys exchanged through the QR code, so the tunnel only ever carries ciphertext.
 
 ## Releasing
 

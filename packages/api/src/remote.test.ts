@@ -42,6 +42,19 @@ describe("parsePairingUrl", () => {
     expect(here).toMatchObject({ addresses: ["localhost"], port: 8080 });
   });
 
+  it("reads the public address", () => {
+    const info = parsePairingUrl("brainwashed://pair?v=1&k=abc&t=tok&a=192.168.1.5&p=1&u=https%3A%2F%2Fai.example.org%2F");
+    expect(info.publicUrl).toBe("https://ai.example.org");
+    // The web app stays on whatever address served it.
+    const web = parsePairingUrl("https://ai.example.org/#pair?v=1&k=abc&t=tok&a=&p=1&u=https%3A%2F%2Fai.example.org", {
+      address: "https://ai.example.org",
+      port: 443,
+    });
+    expect(web.publicUrl).toBeUndefined();
+    expect(web.addresses).toEqual(["https://ai.example.org"]);
+    expect(() => parsePairingUrl("brainwashed://pair?v=1&k=abc&t=tok&a=&p=1&u=javascript%3Aalert(1)")).toThrow();
+  });
+
   it("reads the relay address", () => {
     const info = parsePairingUrl("brainwashed://pair?v=1&k=abc_-&t=tok&a=&p=1&r=https%3A%2F%2Frelay.example.org%2F");
     expect(info.relay).toBe("https://relay.example.org/h/abc_-");

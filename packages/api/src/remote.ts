@@ -3,7 +3,26 @@
 
 import nacl from "tweetnacl";
 import { fromBase64, toBase64, utf8Decode, utf8Encode } from "./encoding";
-import type { ChatEvent, ChatMessage, EngineState, HostInfo, InstalledModel, SkillInfo } from "./types";
+import type {
+  AccessStatus,
+  AuditEntry,
+  CatalogItem,
+  ChatEvent,
+  ChatMessage,
+  DeviceIdentity,
+  DeviceRole,
+  DownloadStatus,
+  EngineState,
+  Hardware,
+  HostInfo,
+  HostSettings,
+  InstalledModel,
+  PairedDevice,
+  PairingOffer,
+  SkillInfo,
+  SkillList,
+  UpdateInfo,
+} from "./types";
 
 export interface PairingInfo {
   hostKey: string;
@@ -13,6 +32,8 @@ export interface PairingInfo {
   hostName: string;
   /** Where to reach the host through its relay when away from home. */
   relay?: string;
+  /** The host's public https address (a tunnel or the owner's own domain). */
+  publicUrl?: string;
 }
 
 const PAIRING_LINK = /^(?:brainwashed:\/\/pair|https?:\/\/[^#]*#pair)\?(.*)$/;
@@ -48,7 +69,11 @@ export function parsePairingUrl(url: string, at?: { address: string; port: numbe
   if (relayUrl !== undefined && !/^https?:\/\/[^/?#\s]+/.test(relayUrl)) {
     throw new Error("This pairing code has a bad relay address.");
   }
-  if (addresses.length === 0 && !relayUrl) {
+  const publicUrl = at ? undefined : params.get("u")?.replace(/\/+$/, "");
+  if (publicUrl !== undefined && !/^https?:\/\/[^/?#\s]+$/.test(publicUrl)) {
+    throw new Error("This pairing code has a bad public address.");
+  }
+  if (addresses.length === 0 && !relayUrl && !publicUrl) {
     throw new Error("The computer isn't on a local network. Connect it to Wi-Fi, then show a new code.");
   }
   return {
@@ -58,6 +83,7 @@ export function parsePairingUrl(url: string, at?: { address: string; port: numbe
     port: at ? at.port : Number(get("p")),
     hostName: params.get("n") ?? "Computer",
     ...(relayUrl ? { relay: `${relayUrl}/h/${hostKey}` } : {}),
+    ...(publicUrl ? { publicUrl } : {}),
   };
 }
 
@@ -74,8 +100,17 @@ export interface PairedHost {
   port: number;
   /** Base URL through the host's relay, tried after the local addresses. */
   relay?: string;
+  /** The host's public https address, tried after the local addresses and before the relay. */
+  publicUrl?: string;
+  /** What the host lets this device do. Older hosts don't say. */
+  role?: DeviceRole;
   /** The address (or relay URL) that last worked, tried first. */
   lastAddress?: string;
+}
+
+/** Local addresses first, then the public address, then the relay. */
+function candidates(h: { addresses: string[]; publicUrl?: string; relay?: string }): string[] {
+  return [...h.addresses, ...(h.publicUrl ? [h.publicUrl] : []), ...(h.relay ? [h.relay] : [])];
 }
 
 type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{
@@ -129,7 +164,7 @@ const CONNECT_TIMEOUT_MS = 6000;
 /** Away from home, local addresses don't answer; give up on them sooner when a relay can take over. */
 const LAN_TIMEOUT_WITH_RELAY_MS = 2500;
 
-/** A local address, or a relay URL, which is used as is. */
+/** A local address, or a full URL (public address or relay), which is used as is. */
 function baseUrl(address: string, port: number): string {
   return /^https?:\/\//.test(address) ? address : `http://${address}:${port}`;
 }
@@ -180,8 +215,7 @@ export async function pairWithHost(
   const keys = nacl.box.keyPair();
   const hostKey = fromBase64(info.hostKey);
   const env = seal({ token: info.token, deviceName }, hostKey, keys.secretKey);
-  const candidates = info.relay ? [...info.addresses, info.relay] : info.addresses;
-  const { result, address } = await reach(candidates, info.port, async (base, signal) => {
+  const { result, address } = await reach(candidates(info), info.port, async (base, signal) => {
     const res = await fetchImpl(`${base}/pair`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -189,7 +223,7 @@ export async function pairWithHost(
       signal,
     });
     if (!res.ok) throw await errorFrom(res);
-    return open<{ deviceId: string; hostId: string; hostName: string }>(
+    return open<{ deviceId: string; hostId: string; hostName: string; role?: DeviceRole }>(
       JSON.parse(await res.text()),
       hostKey,
       keys.secretKey,
@@ -205,6 +239,8 @@ export async function pairWithHost(
     addresses: info.addresses,
     port: info.port,
     ...(info.relay ? { relay: info.relay } : {}),
+    ...(info.publicUrl ? { publicUrl: info.publicUrl } : {}),
+    ...(result.role ? { role: result.role } : {}),
     lastAddress: address,
   };
 }
@@ -226,16 +262,41 @@ export class RemoteHost {
     this.fetchImpl = (url, init) => fetchImpl(url, init);
   }
 
+  // Any device.
   info = () => this.call<HostInfo>("info");
   state = () => this.call<EngineState>("state");
   models = () => this.call<InstalledModel[]>("models");
-  loadModel = (id: string) => this.call<null>("loadModel", { id });
   skills = () => this.call<SkillInfo[]>("skills");
+  whoami = () => this.call<DeviceIdentity>("whoami");
+
+  // Admins only.
+  loadModel = (id: string) => this.call<null>("loadModel", { id });
+  unloadModel = () => this.call<null>("unloadModel");
+  hardware = () => this.call<Hardware>("hardware");
+  catalog = () => this.call<CatalogItem[]>("catalog");
+  downloadModel = (repo: string, quant?: string) => this.call<null>("downloadModel", { repo, quant });
+  downloads = () => this.call<DownloadStatus[]>("downloads");
+  deleteModel = (id: string) => this.call<null>("deleteModel", { id });
   setSkillEnabled = (name: string, enabled: boolean) => this.call<null>("setSkillEnabled", { name, enabled });
+  skillList = () => this.call<SkillList>("skillList");
+  skillSource = (name: string) => this.call<string>("skillSource", { name });
+  /** Saves a SKILL.md; returns the skill's name. */
+  saveSkill = (source: string, previousName?: string) => this.call<string>("saveSkill", { source, previousName });
+  deleteSkill = (name: string) => this.call<null>("deleteSkill", { name });
+  settings = () => this.call<HostSettings>("settings");
+  updateSettings = (settings: Partial<HostSettings>) => this.call<HostSettings>("updateSettings", { settings });
+  access = () => this.call<AccessStatus>("access");
+  checkForUpdate = () => this.call<UpdateInfo | null>("checkForUpdate");
+  devices = () => this.call<PairedDevice[]>("devices");
+  createPairingOffer = (role: DeviceRole) => this.call<PairingOffer>("createPairingOffer", { role });
+  removeDevice = (id: string) => this.call<null>("removeDevice", { id });
+  setDeviceRole = (id: string, role: DeviceRole) => this.call<null>("setDeviceRole", { id, role });
+  renameDevice = (id: string, name: string) => this.call<null>("renameDevice", { id, name });
+  auditLog = (limit = 100) => this.call<AuditEntry[]>("auditLog", { limit });
 
   private addresses(): string[] {
-    const { lastAddress, relay } = this.host;
-    const all = relay ? [...this.host.addresses, relay] : this.host.addresses;
+    const { lastAddress } = this.host;
+    const all = candidates(this.host);
     return lastAddress && all.includes(lastAddress) ? [lastAddress, ...all.filter((a) => a !== lastAddress)] : all;
   }
 

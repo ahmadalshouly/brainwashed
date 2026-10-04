@@ -88,22 +88,99 @@ export type EngineEvent =
   | { type: "modelsChanged" }
   | { type: "skillsChanged" };
 
-/** A phone paired with the host. Mirrors `Device` in crates/gateway. */
+/** Admins manage the host; members chat. Mirrors `DeviceRole` in crates/gateway. */
+export type DeviceRole = "admin" | "member";
+
+/** A device paired with the host. Mirrors `Device` in crates/gateway. */
 export interface PairedDevice {
   id: string;
   name: string;
   publicKey: string;
   pairedAt: number;
   lastSeen: number | null;
+  role: DeviceRole;
+  /** Set in the `devices` call for the device that made it. */
+  current?: boolean;
 }
 
-export interface PhoneAccessStatus {
+/** Who the host thinks this device is (`whoami`). */
+export interface DeviceIdentity {
+  deviceId: string;
+  name: string;
+  role: DeviceRole;
+}
+
+/** Mirrors `GatewayStatus` in crates/gateway (`access`). */
+export interface AccessStatus {
   running: boolean;
   port: number | null;
   addresses: string[];
   hostId: string;
   /** Remote access through a relay, when one is set. */
   relay: RelayStatus | null;
+  /** Remote access through a Cloudflare tunnel, when it's on. */
+  tunnel: TunnelStatus | null;
+  /** Where devices reach the host from anywhere, if anywhere. */
+  publicUrl: string | null;
+}
+
+/** @deprecated Use AccessStatus. */
+export type PhoneAccessStatus = AccessStatus;
+
+export interface TunnelStatus {
+  kind: "quick" | "cloudflare";
+  url: string | null;
+  connected: boolean;
+  error: string | null;
+}
+
+export type RemoteAccess = "off" | "quick" | "cloudflare";
+
+/** Host settings as admins see them. Mirrors `Settings` in crates/core. */
+export interface HostSettings {
+  host_name: string | null;
+  backend: "auto" | "cpu" | "metal" | "vulkan";
+  context_size: number;
+  gpu_layers: number;
+  llama_server_path: string | null;
+  active_model: string | null;
+  system_prompt: string;
+  disabled_skills: string[];
+  phone_port: number;
+  relay_url: string | null;
+  remote_access: RemoteAccess;
+  /** Never sent by the host; send a string to set it, "" to clear it. */
+  tunnel_token: string | null;
+  tunnel_token_set: boolean;
+  public_url: string | null;
+  cloudflared_path: string | null;
+  check_for_updates: boolean;
+}
+
+export interface Hardware {
+  os: string;
+  arch: string;
+  total_memory_bytes: number;
+  cpu_cores: number;
+}
+
+/** A model download in progress or just finished. */
+export interface DownloadStatus {
+  repo: string;
+  done: number;
+  total: number | null;
+  finished: boolean;
+  error: string | null;
+}
+
+/** One line of the host's audit log. */
+export interface AuditEntry {
+  at: number;
+  deviceId: string | null;
+  deviceName: string | null;
+  action: string;
+  target?: string;
+  error?: string;
 }
 
 export interface RelayStatus {
@@ -122,11 +199,20 @@ export interface UpdateInfo {
 export interface PairingOffer {
   /** App link, `brainwashed://pair?...`. */
   url: string;
-  /** The same details as a link to the host's web chat. This is what the QR code shows. */
+  /** The same details as a link to the host's web app. This is what the QR code shows. */
   webUrl: string;
+  /** The web link on the local network, if the host is on one. */
+  lanUrl: string | null;
+  /** The web link through the public address, if there is one. */
+  publicUrl: string | null;
+  /** What follows `#pair?`. */
+  query: string;
+  role: DeviceRole;
   expiresAt: number;
   addresses: string[];
   port: number;
+  /** The QR code for `webUrl`, as rows of "1" (dark) and "0" (light). Sent by `createPairingOffer`. */
+  qr?: string[];
 }
 
 export type GatewayEvent = { type: "devicePaired"; device: PairedDevice } | { type: "devicesChanged" };
