@@ -13,6 +13,15 @@ Download the installer for your computer from the [latest release](https://githu
 
 Not sure which Mac you have? Apple menu > About This Mac: "Chip: Apple M…" means Apple silicon.
 
+## Or install from a terminal
+
+The command-line version does everything except show a window: it downloads a model, serves the web chat to your browser and your phone, and lets you chat in the terminal.
+
+- **Windows** (PowerShell): `irm https://raw.githubusercontent.com/ahmadalshouly/brainwashed/main/install.ps1 | iex`
+- **macOS and Linux**: `curl -fsSL https://raw.githubusercontent.com/ahmadalshouly/brainwashed/main/install.sh | sh`
+
+It starts right away. The first run downloads a small model that fits your computer and opens the chat in your browser; scan the QR code in the terminal to use it from your phone. Later, run `brainwashed` again, or `brainwashed --help` for the other commands (`chat`, `models`, `pull`, `use`, `skills`). It shares models, skills and paired devices with the desktop app, so run one or the other.
+
 ## First start
 
 1. Open BrainWashed. The **Models** tab suggests models that fit your computer's memory.
@@ -36,6 +45,7 @@ BrainWashed checks GitHub for new releases when it starts and shows **Version X 
 ## Using it from other devices
 
 - At home: open **Devices** and pair a phone or another computer with the QR code. See the [README](../README.md#using-it-from-your-phone-or-another-computer).
+- On Windows, the first time you turn on **Allow phones and browsers on this network**, Windows Firewall asks whether BrainWashed may use the network. Tick **Private networks** and click **Allow access**. Your Wi-Fi must also be set to a private network (Settings > Network & internet > Wi-Fi > your network > **Private network**), or phones can't connect.
 - Away from home: set up a relay. See [relay.md](relay.md).
 
 ## Uninstalling

@@ -110,6 +110,39 @@ jobs:
           cargo build -p brainwashed-gateway --example devserver
           BRAINWASHED_DEVSERVER="$PWD/target/debug/examples/devserver" pnpm --filter @brainwashed/api test
 
+  cli:
+    name: Command line (${{ matrix.platform }})
+    needs: [js, rust]
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @brainwashed/web build
+      - run: cargo build --release --locked -p brainwashed-cli
+      - name: Smoke test
+        shell: bash
+        run: |
+          target/release/brainwashed --version
+          target/release/brainwashed models --data-dir "$RUNNER_TEMP/bw"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainwashed-cli-${{ matrix.platform }}
+          path: |
+            target/release/brainwashed
+            target/release/brainwashed.exe
+          if-no-files-found: error
+
   host:
     name: Host app (${{ matrix.platform }})
     needs: [js, rust]

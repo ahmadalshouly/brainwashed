@@ -1,0 +1,21 @@
+[package]
+name = "brainwashed-cli"
+version = "0.1.0"
+description = "Runs BrainWashed from a terminal: models, chat, and the web chat for phones, without the desktop app."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "brainwashed"
+path = "src/main.rs"
+
+[dependencies]
+brainwashed-core = { path = "../core" }
+brainwashed-gateway = { path = "../gateway" }
+dirs = "7"
+open = "5"
+qrcode = { version = "0.14", default-features = false }
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

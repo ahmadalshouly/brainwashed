@@ -291,21 +291,76 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// Private IPv4 addresses a phone on the same network could reach.
+/// Private IPv4 addresses a phone on the same network could reach, most
+/// likely first. The web link in the QR code uses the first one.
 pub fn lan_addresses() -> Vec<IpAddr> {
-    let mut addrs: Vec<IpAddr> = if_addrs::get_if_addrs()
+    let candidates = if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
-        .filter(|i| !i.is_loopback())
-        .map(|i| i.ip())
-        .filter(|ip| match ip {
-            IpAddr::V4(v4) => v4.is_private() || v4.is_link_local(),
-            IpAddr::V6(_) => false,
+        .filter(|i| !i.is_loopback() && i.is_oper_up())
+        .map(|i| (i.name.clone(), i.ip()));
+    rank_addresses(candidates)
+}
+
+/// Orders interface addresses so the home Wi-Fi or Ethernet address comes
+/// first. Windows in particular lists virtual adapters (WSL, Hyper-V, Docker,
+/// VirtualBox, VPNs) and self-assigned 169.254 addresses next to the real one.
+fn rank_addresses(candidates: impl IntoIterator<Item = (String, IpAddr)>) -> Vec<IpAddr> {
+    let mut ranked: Vec<(u8, IpAddr)> = candidates
+        .into_iter()
+        .filter_map(|(name, ip)| match ip {
+            IpAddr::V4(v4) if v4.is_private() || v4.is_link_local() => {
+                let range = match v4.octets() {
+                    _ if v4.is_link_local() => 6,
+                    [192, 168, ..] => 0,
+                    [10, ..] => 1,
+                    _ => 2,
+                };
+                // Virtual adapters rank after every real one except 169.254.
+                let rank = if is_virtual_adapter(&name) {
+                    3 + range.min(2)
+                } else {
+                    range
+                };
+                Some((rank, ip))
+            }
+            _ => None,
         })
         .collect();
-    addrs.sort();
-    addrs.dedup();
+    ranked.sort();
+    let mut addrs: Vec<IpAddr> = Vec::new();
+    for (_, ip) in ranked {
+        if !addrs.contains(&ip) {
+            addrs.push(ip);
+        }
+    }
     addrs
+}
+
+fn is_virtual_adapter(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    [
+        "vethernet",
+        "wsl",
+        "hyper-v",
+        "docker",
+        "virtualbox",
+        "vboxnet",
+        "vmware",
+        "vmnet",
+        "br-",
+        "veth",
+        "virbr",
+        "tailscale",
+        "zerotier",
+        "utun",
+        "tun",
+        "tap",
+        "wireguard",
+        "vpn",
+    ]
+    .iter()
+    .any(|v| name.contains(v))
 }
 
 fn percent_encode(s: &str) -> String {
@@ -528,4 +583,47 @@ fn chat(gw: Gateway, device_key: crypto_box::PublicKey, params: Value) -> Respon
         .header(header::CACHE_CONTROL, "no-store")
         .body(Body::from_stream(body))
         .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn home_network_address_comes_first() {
+        let ranked = rank_addresses([
+            ("vEthernet (WSL)".to_string(), ip("172.25.48.1")),
+            ("Ethernet 2".to_string(), ip("169.254.12.7")),
+            ("Wi-Fi".to_string(), ip("192.168.1.42")),
+            (
+                "VirtualBox Host-Only Network".to_string(),
+                ip("192.168.56.1"),
+            ),
+            ("Wi-Fi".to_string(), ip("fe80::1")),
+            ("Wi-Fi".to_string(), ip("8.8.8.8")),
+        ]);
+        assert_eq!(
+            ranked,
+            [
+                ip("192.168.1.42"),
+                ip("192.168.56.1"),
+                ip("172.25.48.1"),
+                ip("169.254.12.7")
+            ]
+        );
+    }
+
+    #[test]
+    fn keeps_office_style_networks() {
+        let ranked = rank_addresses([
+            ("eth0".to_string(), ip("172.20.0.5")),
+            ("docker0".to_string(), ip("172.17.0.1")),
+            ("wlan0".to_string(), ip("10.0.0.8")),
+        ]);
+        assert_eq!(ranked, [ip("10.0.0.8"), ip("172.20.0.5"), ip("172.17.0.1")]);
+    }
 }
