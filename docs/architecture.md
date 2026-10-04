@@ -115,7 +115,6 @@ brainwashed/
   crates/skills/      Skill parser, router
   crates/gateway/     Pairing, auth, relay client
   crates/relay/       Relay server for access away from home
-  model/              Fine-tune scripts, data gen, evals
   skills-examples/    Starter skills
   docs/
 ```

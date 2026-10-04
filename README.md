@@ -25,7 +25,6 @@ It starts right away and opens the admin page. Later, run `brainwashed`. [docs/i
 | `crates/gateway` | The host's server: encrypted API for paired devices, roles, audit log, tunnel and relay connection |
 | `crates/relay` | Relay server for using BrainWashed away from home ([docs](docs/relay.md)) |
 | `skills-examples` | Example skills |
-| `model` | Fine-tuning scripts and evals for the BrainWashed model |
 | `docs` | Architecture and design notes |
 
 ## Getting started
