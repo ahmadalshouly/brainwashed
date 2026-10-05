@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "brainwashed-cli"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "brainwashed-core",
  "brainwashed-gateway",
@@ -248,7 +248,7 @@ dependencies = [
 
 [[package]]
 name = "brainwashed-relay"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "axum",
  "base64 0.22.1",
