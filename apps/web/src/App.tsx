@@ -213,6 +213,10 @@ const NAV: NavItem[] = [
   },
 ];
 
+/** Donations to the project, also linked from the README. */
+const DONATE_URL = "https://www.paypal.com/pool/9tf5FyKDzU";
+const HEART = "M12 20s-7-4.4-7-10a4 4 0 017-2.6A4 4 0 0119 10c0 5.6-7 10-7 10z";
+
 function Icon({ d }: { d: string }) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" strokeLinecap="round" aria-hidden>
@@ -331,6 +335,10 @@ function Shell({
             ))}
           </nav>
           <div className="sidebar-foot">
+            <a className="donate" href={DONATE_URL} target="_blank" rel="noopener noreferrer">
+              <Icon d={HEART} />
+              Support BrainWashed
+            </a>
             <span className="badge">{role === "admin" ? "Admin" : "Member"}</span>
             <button className="ghost" onClick={() => setPrefs(!prefs)}>
               Preferences
