@@ -597,3 +597,47 @@ mod tests {
         assert_eq!(ask.text(), "Which file?\n- a\n- b");
     }
 }
+
+#[cfg(test)]
+mod real_replies {
+    use super::*;
+
+    fn run(text: &str) -> (String, Vec<ToolCall>) {
+        let mut f = ToolCallFilter::default();
+        let mut out = String::new();
+        let mut calls = vec![];
+        let mut pieces = vec![];
+        for ch in text.chars() {
+            pieces.extend(f.push(&ch.to_string()));
+        }
+        pieces.extend(f.finish());
+        for p in pieces {
+            match p {
+                Piece::Text(t) => out.push_str(&t),
+                Piece::Call(c) => calls.push(c),
+            }
+        }
+        (out, calls)
+    }
+
+    /// Replies LFM2.5 gave in real chats, streamed a character at a time.
+    #[test]
+    fn calls_after_text_with_escaped_newlines() {
+        let (t, c) = run("Let me draft a professional response to this letter:\n\n<|tool_call_start|>[writing_assistant(draft='')]<|tool_call_end|>");
+        assert_eq!(
+            t,
+            "Let me draft a professional response to this letter:\n\n"
+        );
+        assert_eq!(c[0].name, "writing_assistant");
+        let (t, c) = run("Let me draft a professional response that addresses all requirements.<|tool_call_start|>[write(file='Aufforderung_zur_Mitwirkung.pdf', content='Aufforderung zur Mitwirkung - Antwort\\n\\nBedarfsgemeinschaft: 13912//0031050\\nName: X\\n\\n**Einreichte Unterlagen:**\\n- Kopie\\nE-Mail: [Ihre E-Mail]\\n')]<|tool_call_end|>");
+        assert_eq!(
+            t,
+            "Let me draft a professional response that addresses all requirements."
+        );
+        assert_eq!(c[0].name, "write");
+        assert!(c[0].arguments["content"]
+            .as_str()
+            .unwrap()
+            .contains("Antwort\n\nBedarfsgemeinschaft"));
+    }
+}

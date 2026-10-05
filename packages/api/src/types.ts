@@ -189,8 +189,10 @@ export type ChatEvent =
   | ({ kind: "stats" } & ReplyStats);
 
 /**
- * A tool the model tried to use. BrainWashed offers models no tools, so it
- * is shown, never run. Mirrors `ToolCall` in crates/runtime.
+ * A tool the model called. The one BrainWashed offers is `ask_user`, with
+ * arguments `{ question: string, options: string[] }`: show the question
+ * and let the person tap an option, sent back as an ordinary user message.
+ * Any other call is shown, never run. Mirrors `ToolCall` in crates/runtime.
  */
 export interface ToolCall {
   /** "call_0", "call_1"... in the order the reply made them. */
