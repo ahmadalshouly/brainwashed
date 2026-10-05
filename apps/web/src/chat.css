@@ -925,6 +925,60 @@
   overflow-y: auto;
 }
 
+.tool-call {
+  margin: 8px 0;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  font-size: 0.9em;
+}
+
+.tool-call summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink-2);
+}
+
+.tool-call summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-call summary span {
+  flex: 1;
+}
+
+.tool-call summary code {
+  font-size: 0.95em;
+}
+
+.tool-call[open] summary > svg:last-child {
+  transform: rotate(180deg);
+}
+
+.tool-call-body {
+  padding: 0 12px 10px;
+  color: var(--ink-3);
+}
+
+.tool-call-body p {
+  margin: 0 0 8px;
+}
+
+.tool-call-body pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
 .shimmer {
   background: linear-gradient(90deg, var(--ink-3) 0%, var(--ink) 50%, var(--ink-3) 100%);
   background-size: 200% 100%;

@@ -388,3 +388,53 @@ async fn talks_to_cloud_providers() {
     assert!(body.get("top_k").is_none());
     assert!(body.get("chat_template_kwargs").is_none());
 }
+
+/// Tool-call markup never reaches the answer: questions become text, other
+/// calls come as their own deltas, from markup or from the server.
+#[tokio::test]
+async fn takes_tool_calls_out_of_the_answer() {
+    let sse = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Here you go.<|tool_\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"call_start|>[ask_user(\\\"Which page?\\\")]<|tool_call_end|>\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"<|tool_call_start|>[search(q='x')]<|tool_call_end|>\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"calc\",\"arguments\":\"{\\\"e\\\":\"}}]}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"1+1\\\"}\"}}]}}]}\n\n",
+        "data: [DONE]\n\n",
+    );
+    let base = serve(Router::new().route(
+        "/v1/chat/completions",
+        post(move || async move {
+            Response::builder()
+                .header("content-type", "text/event-stream")
+                .body(Body::from(sse))
+                .unwrap()
+        }),
+    ))
+    .await;
+    let mut deltas = Vec::new();
+    let answer = stream_chat(
+        &client(),
+        &Endpoint::llama(&base),
+        &[ChatMessage::new(Role::User, "hi")],
+        &SamplingOptions::default(),
+        false,
+        |d| deltas.push(d),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "Here you go.\n\nWhich page?");
+    let calls: Vec<_> = deltas
+        .iter()
+        .filter_map(|d| match d {
+            Delta::ToolCall(c) => Some((c.name.clone(), c.arguments.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        vec![
+            ("search".to_string(), serde_json::json!({"q": "x"})),
+            ("calc".to_string(), serde_json::json!({"e": "1+1"})),
+        ]
+    );
+}

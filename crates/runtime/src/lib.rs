@@ -9,6 +9,7 @@ pub mod gguf;
 pub mod hardware;
 pub mod llama;
 pub mod release;
+pub mod toolcalls;
 
 pub use chat::{Attachment, ChatMessage, Endpoint, ReplyStats, Role, SamplingOptions};
 pub use hardware::{Backend, Hardware};

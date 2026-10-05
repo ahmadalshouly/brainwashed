@@ -327,7 +327,7 @@ struct Progress {
 impl Progress {
     fn see(&mut self, e: &ChatEvent, started: std::time::Instant) {
         match e {
-            ChatEvent::Content { .. } | ChatEvent::Reasoning { .. } => {
+            ChatEvent::Content { .. } | ChatEvent::Reasoning { .. } | ChatEvent::ToolCall(_) => {
                 self.first_token_ms
                     .get_or_insert(started.elapsed().as_millis() as u64);
             }
@@ -460,16 +460,32 @@ pub(crate) async fn chat_completions(
         let _guard = guard;
         let mut reasoning = String::new();
         let mut stats = None;
+        let mut calls = Vec::new();
         while let Some(piece) = rx.recv().await {
             match piece {
                 Piece::Event(ChatEvent::Reasoning { text }) => reasoning.push_str(&text),
+                Piece::Event(ChatEvent::ToolCall(call)) => calls.push(call),
                 Piece::Event(ChatEvent::Stats(s)) => stats = Some(s),
                 Piece::Event(_) => {}
                 Piece::Done(Err(e)) => return engine_error(&e),
-                Piece::Done(Ok(answer)) => {
+                Piece::Done(Ok(mut answer)) => {
+                    let (readable, unreadable): (Vec<_>, Vec<_>) =
+                        calls.into_iter().partition(|c| !c.name.is_empty());
+                    for c in unreadable {
+                        answer.push_str(&format!("\n\n{}", c.raw.unwrap_or_default()));
+                    }
                     let mut message = json!({ "role": "assistant", "content": answer });
                     if !reasoning.is_empty() {
                         message["reasoning_content"] = json!(reasoning);
+                    }
+                    let mut finish = finish_reason(stats.as_ref());
+                    if !readable.is_empty() {
+                        message["tool_calls"] = readable
+                            .iter()
+                            .enumerate()
+                            .map(|(i, c)| wire_call(i, c, false))
+                            .collect();
+                        finish = "tool_calls";
                     }
                     let body = json!({
                         "id": id,
@@ -479,7 +495,7 @@ pub(crate) async fn chat_completions(
                         "choices": [{
                             "index": 0,
                             "message": message,
-                            "finish_reason": finish_reason(stats.as_ref()),
+                            "finish_reason": finish,
                         }],
                         "usage": usage(stats.as_ref()),
                     });
@@ -524,6 +540,24 @@ fn finish_reason(stats: Option<&brainwashed_core::ReplyStats>) -> &'static str {
     }
 }
 
+/// A tool call the model made, in OpenAI's shape. Streamed calls carry
+/// their index and come whole, in one chunk.
+fn wire_call(
+    i: usize,
+    call: &brainwashed_core::runtime::toolcalls::ToolCall,
+    streamed: bool,
+) -> Value {
+    let mut v = json!({
+        "id": format!("call_{i}"),
+        "type": "function",
+        "function": { "name": call.name, "arguments": call.arguments.to_string() },
+    });
+    if streamed {
+        v["index"] = json!(i);
+    }
+    v
+}
+
 fn usage(stats: Option<&brainwashed_core::ReplyStats>) -> Value {
     let (prompt, completion) = stats.map_or((0, 0), |s| (s.prompt_tokens, s.tokens));
     json!({
@@ -548,6 +582,7 @@ fn async_stream(
         chunk: F,
         started: bool,
         stats: Option<brainwashed_core::ReplyStats>,
+        calls: usize,
         finished: bool,
     }
     let state = St {
@@ -556,6 +591,7 @@ fn async_stream(
         chunk,
         started: false,
         stats: None,
+        calls: 0,
         finished: false,
     };
     let sse = |v: &Value| format!("data: {v}\n\n");
@@ -576,6 +612,15 @@ fn async_stream(
                 Some(Piece::Event(ChatEvent::Reasoning { text })) => {
                     sse(&(st.chunk)(json!({ "reasoning_content": text }), None))
                 }
+                Some(Piece::Event(ChatEvent::ToolCall(call))) if call.name.is_empty() => {
+                    let text = format!("\n\n{}", call.raw.unwrap_or_default());
+                    sse(&(st.chunk)(json!({ "content": text }), None))
+                }
+                Some(Piece::Event(ChatEvent::ToolCall(call))) => {
+                    let wire = wire_call(st.calls, &call, true);
+                    st.calls += 1;
+                    sse(&(st.chunk)(json!({ "tool_calls": [wire] }), None))
+                }
                 Some(Piece::Event(ChatEvent::Stats(s))) => {
                     st.stats = Some(s);
                     continue;
@@ -583,7 +628,12 @@ fn async_stream(
                 Some(Piece::Event(_)) => continue,
                 Some(Piece::Done(Ok(_))) => {
                     st.finished = true;
-                    let last = (st.chunk)(json!({}), Some(finish_reason(st.stats.as_ref())));
+                    let finish = if st.calls > 0 {
+                        "tool_calls"
+                    } else {
+                        finish_reason(st.stats.as_ref())
+                    };
+                    let last = (st.chunk)(json!({}), Some(finish));
                     let mut out = sse(&last);
                     if include_usage {
                         let mut u = (st.chunk)(json!({}), None);

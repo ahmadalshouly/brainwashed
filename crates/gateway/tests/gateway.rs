@@ -898,3 +898,55 @@ async fn the_openai_api_uses_keys_skills_and_chat_defaults() {
         .unwrap();
     assert_eq!(r.status(), 401);
 }
+
+#[tokio::test]
+async fn the_openai_api_returns_tool_calls_the_model_makes() {
+    use axum::{routing::post, Router};
+
+    // A model that calls a tool it was never given.
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(|| async {
+            (
+                [("content-type", "text/event-stream")],
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Sure.<tool_call>{\\\"name\\\": \\\"search\\\", \\\"arguments\\\": {\\\"q\\\": \\\"x\\\"}}</tool_call>\"}}]}\n\ndata: [DONE]\n\n",
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let (_gw, url, port, _dir) = setup().await;
+    let mut admin = Phone::from_offer(&url, port);
+    admin.pair(&query(&url, "t")).await.unwrap();
+    admin
+        .call(
+            "saveProvider",
+            json!({ "provider": { "id": "acme", "name": "acme", "baseUrl": base, "apiKey": "k", "models": ["fast"], "members": true }}),
+        )
+        .await;
+    let created = admin.call("createApiKey", json!({ "name": "t" })).await;
+    let secret = created["ok"]["secret"].as_str().unwrap().to_string();
+    let api = format!("http://127.0.0.1:{port}/v1/chat/completions");
+    let http = reqwest::Client::new();
+    let ask = |stream: bool| {
+        http.post(&api)
+            .bearer_auth(&secret)
+            .json(&json!({ "model": "acme/fast", "stream": stream, "messages": [{ "role": "user", "content": "find x" }] }))
+            .send()
+    };
+
+    let body: Value = ask(false).await.unwrap().json().await.unwrap();
+    let choice = &body["choices"][0];
+    assert_eq!(choice["message"]["content"], "Sure.", "{body}");
+    assert_eq!(choice["finish_reason"], "tool_calls");
+    let call = &choice["message"]["tool_calls"][0];
+    assert_eq!(call["function"]["name"], "search");
+    assert_eq!(call["function"]["arguments"], "{\"q\":\"x\"}");
+
+    let text = ask(true).await.unwrap().text().await.unwrap();
+    assert!(!text.contains("tool_call>"), "{text}");
+    assert!(text.contains("\"tool_calls\":[{"), "{text}");
+    assert!(text.contains("\"finish_reason\":\"tool_calls\""), "{text}");
+}
