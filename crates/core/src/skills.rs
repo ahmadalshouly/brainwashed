@@ -5,6 +5,7 @@ use crate::community::{read_origin, sha256_hex, SkillOrigin};
 use crate::engine::Event;
 use crate::{Engine, Error, Result};
 use brainwashed_runtime::chat::Delta;
+use brainwashed_runtime::toolcalls::ToolCall;
 use brainwashed_runtime::{Attachment, ChatMessage, ReplyStats, Role};
 use brainwashed_skills::{fingerprint, LoadError, Registry, Router, SkillEntry, SKILL_FILE};
 use serde::Serialize;
@@ -87,6 +88,9 @@ pub enum ChatEvent {
     Reasoning {
         text: String,
     },
+    /// A tool the model tried to use. Nothing runs it; clients show it.
+    #[serde(rename = "tool_call")]
+    ToolCall(ToolCall),
     /// Sent once, after the answer.
     Stats(ReplyStats),
 }
@@ -96,6 +100,7 @@ impl From<Delta> for ChatEvent {
         match d {
             Delta::Content(text) => ChatEvent::Content { text },
             Delta::Reasoning(text) => ChatEvent::Reasoning { text },
+            Delta::ToolCall(call) => ChatEvent::ToolCall(call),
             Delta::Stats(stats) => ChatEvent::Stats(stats),
         }
     }

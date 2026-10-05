@@ -885,6 +885,13 @@ async fn chat(engine: Engine) -> Result {
                         print!("(thinking...) ");
                     }
                     ChatEvent::Content { text } => print!("{text}"),
+                    ChatEvent::ToolCall(call) if call.name.is_empty() => {
+                        print!("\n(the model tried to use a tool BrainWashed doesn't have)")
+                    }
+                    ChatEvent::ToolCall(call) => print!(
+                        "\n(the model tried to use the tool {}, which BrainWashed doesn't have)",
+                        call.name
+                    ),
                     _ => {}
                 }
                 let _ = std::io::stdout().flush();

@@ -1,5 +1,6 @@
 //! Streaming chat completions against llama-server's OpenAI-compatible API.
 
+use crate::toolcalls::{Piece, ToolCall, ToolCallFilter};
 use crate::{Error, Result};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -227,6 +228,10 @@ pub enum Delta {
     Content(String),
     /// Part of a reasoning model's thinking, shown separately.
     Reasoning(String),
+    /// A tool call the model made. BrainWashed offers no tools, so these
+    /// are shown, not run. Calls that only ask the person a question come
+    /// as [`Delta::Content`] instead.
+    ToolCall(ToolCall),
     /// Sent once at the end.
     Stats(ReplyStats),
 }
@@ -261,6 +266,23 @@ struct ChunkDelta {
     reasoning_content: Option<String>,
     /// OpenRouter and others.
     reasoning: Option<String>,
+    /// Calls the server recognised itself, streamed in parts by index.
+    #[serde(default)]
+    tool_calls: Vec<WireToolCall>,
+}
+
+#[derive(Deserialize)]
+struct WireToolCall {
+    #[serde(default)]
+    index: usize,
+    #[serde(default)]
+    function: WireFunction,
+}
+
+#[derive(Deserialize, Default)]
+struct WireFunction {
+    name: Option<String>,
+    arguments: Option<String>,
 }
 
 /// Where a chat goes: the local llama-server or a cloud provider with an
@@ -425,6 +447,9 @@ pub async fn stream_chat(
     let mut stats = ReplyStats::default();
     let mut first_token: Option<std::time::Instant> = None;
     let mut parser = SseParser::default();
+    let mut filter = ToolCallFilter::default();
+    let mut native: Vec<(String, String)> = Vec::new();
+    let mut calls = 0;
     let mut stream = res.bytes_stream();
     'read: while let Some(bytes) = stream.next().await {
         for data in parser.push(&bytes?) {
@@ -459,14 +484,56 @@ pub async fn stream_chat(
                 }
                 if let Some(text) = delta.content.filter(|t| !t.is_empty()) {
                     first_token.get_or_insert_with(std::time::Instant::now);
-                    answer.push_str(&text);
-                    on_delta(Delta::Content(text));
+                    for piece in filter.push(&text) {
+                        emit(piece, &mut answer, &mut calls, &mut on_delta);
+                    }
+                }
+                for call in delta.tool_calls {
+                    first_token.get_or_insert_with(std::time::Instant::now);
+                    if native.len() <= call.index {
+                        native.resize(call.index + 1, (String::new(), String::new()));
+                    }
+                    let (name, args) = &mut native[call.index];
+                    name.push_str(call.function.name.as_deref().unwrap_or(""));
+                    args.push_str(call.function.arguments.as_deref().unwrap_or(""));
                 }
             }
         }
     }
+    for piece in filter.finish() {
+        emit(piece, &mut answer, &mut calls, &mut on_delta);
+    }
+    for (name, args) in native {
+        let call = ToolCall {
+            id: String::new(),
+            name,
+            arguments: serde_json::from_str(&args).unwrap_or(serde_json::Value::String(args)),
+            raw: None,
+        };
+        emit(Piece::Call(call), &mut answer, &mut calls, &mut on_delta);
+    }
     on_delta(Delta::Stats(stats));
     Ok(answer)
+}
+
+/// Passes on a piece of the answer. A call that only asks the person a
+/// question becomes part of the answer, on its own paragraph.
+fn emit(piece: Piece, answer: &mut String, calls: &mut usize, on_delta: &mut impl FnMut(Delta)) {
+    let text = match piece {
+        Piece::Text(text) => text,
+        Piece::Call(mut call) => match call.as_question() {
+            Some(q) if answer.trim().is_empty() => q,
+            Some(q) if answer.ends_with("\n\n") => q,
+            Some(q) => format!("\n\n{q}"),
+            None => {
+                call.id = format!("call_{calls}");
+                *calls += 1;
+                return on_delta(Delta::ToolCall(call));
+            }
+        },
+    };
+    answer.push_str(&text);
+    on_delta(Delta::Content(text));
 }
 
 /// Incremental parser for `text/event-stream`, yielding each event's data.

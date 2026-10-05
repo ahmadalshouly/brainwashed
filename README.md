@@ -4,6 +4,8 @@ Turn your laptop into a private AI server, and use it from your phone or any bro
 
 BrainWashed is one command, `brainwashed`. It runs open source language models on your own computer (macOS, Windows, Linux), lets you teach it new abilities by dropping in a markdown **skill** file, and serves a web app: chat for everyone, and admin pages to manage models, skills, devices, remote access and settings. Chats take pictures, PDFs and documents. Admins set thinking, temperature and reply length for everyone in Settings, and each chat can change them for itself. When a local model isn't enough, admins can connect OpenAI, Anthropic, Gemini, OpenRouter or any OpenAI-compatible provider with their own API key. An OpenAI-compatible API lets scripts and other apps use the same models. A built-in secure tunnel makes it reachable from anywhere with no router setup. Optional iOS/Android apps connect to the same host. Your conversations stay end-to-end encrypted between your devices and hardware you own.
 
+> **Support BrainWashed:** [donate through PayPal](https://www.paypal.com/pool/9tf5FyKDzU).
+
 > **Status:** pre-release. See [install.md](docs/install.md) to try it, and the [architecture and roadmap](docs/architecture.md) for what's next.
 
 ## Install
@@ -101,6 +103,10 @@ By default the code carries a free Cloudflare tunnel address, so it works from a
 The optional BrainWashed iOS and Android apps, sold separately, scan the same code. Anyone can build their own client: the protocol is documented and versioned in [docs/client-protocol.md](docs/client-protocol.md), and `@brainwashed/api` implements it in TypeScript.
 
 Messages are end-to-end encrypted with keys exchanged through the QR code, so the tunnel only ever carries ciphertext.
+
+## Support the project
+
+BrainWashed is free and open source. If it's useful to you, you can [donate through PayPal](https://www.paypal.com/pool/9tf5FyKDzU) to support its development. The admin panel links there too.
 
 ## Releasing
 

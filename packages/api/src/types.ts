@@ -185,7 +185,22 @@ export type ChatEvent =
   | { kind: "skills"; names: string[] }
   | { kind: "content"; text: string }
   | { kind: "reasoning"; text: string }
+  | ({ kind: "tool_call" } & ToolCall)
   | ({ kind: "stats" } & ReplyStats);
+
+/**
+ * A tool the model tried to use. BrainWashed offers models no tools, so it
+ * is shown, never run. Mirrors `ToolCall` in crates/runtime.
+ */
+export interface ToolCall {
+  /** "call_0", "call_1"... in the order the reply made them. */
+  id: string;
+  /** Empty when the call couldn't be read; see `raw`. */
+  name: string;
+  /** Named arguments; positional ones are under "0", "1"... */
+  arguments: unknown;
+  raw?: string;
+}
 
 /** Mirrors `EngineState` in crates/core. */
 export type EngineState =

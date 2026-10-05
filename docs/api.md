@@ -36,6 +36,8 @@ Your `system` message is added after BrainWashed's own system prompt and skills;
 
 Not supported: tool and function calls, `n` other than 1, `logprobs`, and audio. Unknown fields are ignored.
 
+Some models are trained to call tools and do so even when none are offered. BrainWashed takes that markup out of the answer: a call that only asks the user a question (`ask_user` and similar) comes back as ordinary text, and any other call comes back in `tool_calls` with `finish_reason: "tool_calls"`, so it never shows up as raw tokens. Nothing runs these calls.
+
 Replies follow OpenAI's format. A thinking model's thoughts come in `reasoning_content` (in `message` or in each streamed `delta`), as llama.cpp and DeepSeek do. `finish_reason` is `length` when the reply hit `max_tokens`. Errors look like `{ "error": { "message", "type", "code" } }`, with 401 for a missing or revoked key, 404 for an unknown model, and 400 for a bad request.
 
 ## Examples

@@ -251,6 +251,10 @@ export function ChatPage({
                 if (thinkingStarted && t.thoughtFor === undefined)
                   return { ...t, content: t.content + e.text, thoughtFor: Math.max(1, Math.round((Date.now() - thinkingStarted) / 1000)) };
                 return { ...t, content: t.content + e.text };
+              case "tool_call": {
+                const { kind: _, ...call } = e;
+                return { ...t, toolCalls: [...(t.toolCalls ?? []), call] };
+              }
               case "stats": {
                 const { kind: _, ...stats } = e;
                 return { ...t, stats };
@@ -849,6 +853,25 @@ export function ChatPage({
                           <i />
                         </span>
                       ) : null}
+                      {t.toolCalls?.map((c, k) => (
+                        <details key={k} className="tool-call">
+                          <summary>
+                            <Icon name="wrench" size={14} />
+                            {c.name ? (
+                              <span>
+                                Tried to use <code>{c.name}</code>
+                              </span>
+                            ) : (
+                              <span>Tried to use a tool</span>
+                            )}
+                            <Icon name="chevronDown" size={14} />
+                          </summary>
+                          <div className="tool-call-body">
+                            <p>This model is trained to use tools, but BrainWashed doesn't give it any, so nothing ran.</p>
+                            <pre>{c.raw ?? JSON.stringify(c.arguments, null, 2)}</pre>
+                          </div>
+                        </details>
+                      ))}
                       {t.error && (
                         <div className="msg-error">
                           {t.error}
