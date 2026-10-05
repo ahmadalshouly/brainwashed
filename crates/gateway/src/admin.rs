@@ -6,7 +6,7 @@
 use crate::devices::{Device, DeviceRole};
 use crate::relay;
 use crate::server::{download_entry, Gateway};
-use brainwashed_core::{Provider, ProviderInfo, Settings};
+use brainwashed_core::{EngineState, Provider, ProviderInfo, Settings};
 use serde_json::{json, Value};
 
 /// Calls any paired device may make.
@@ -27,6 +27,7 @@ const AUDITED: &[&str] = &[
     "unloadModel",
     "downloadModel",
     "deleteModel",
+    "setModelSpeedup",
     "setSkillEnabled",
     "saveSkill",
     "deleteSkill",
@@ -127,9 +128,7 @@ async fn call(gw: &Gateway, device: &Device, method: &str, params: Value) -> Cal
         "catalog" => to_json(engine.catalog()),
         "loadModel" => {
             let id = str_param(&params, "id")?.to_string();
-            if !engine.models().iter().any(|m| m.id == id) {
-                return Err(format!("no installed model `{id}`"));
-            }
+            engine.loadable(&id).map_err(err)?;
             // Loading can take minutes; reply now and let the device poll state.
             let engine = engine.clone();
             tokio::spawn(async move {
@@ -137,6 +136,22 @@ async fn call(gw: &Gateway, device: &Device, method: &str, params: Value) -> Cal
                     tracing::warn!("loading {id} failed: {e}");
                 }
             });
+            Ok(Value::Null)
+        }
+        "setModelSpeedup" => {
+            let id = str_param(&params, "id")?.to_string();
+            engine
+                .set_speedup(&id, params["speedup"].as_str())
+                .map_err(err)?;
+            // A running model picks the change up by loading again.
+            if matches!(engine.state(), EngineState::Ready { model } if model == id) {
+                let engine = engine.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = engine.load_model(&id).await {
+                        tracing::warn!("reloading {id} failed: {e}");
+                    }
+                });
+            }
             Ok(Value::Null)
         }
         "unloadModel" => {

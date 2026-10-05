@@ -15,6 +15,13 @@ pub struct InstalledModel {
     /// Vision projector, for models that can look at pictures.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mmproj: Option<PathBuf>,
+    /// Set when the file is a speculative decoding draft, which only runs
+    /// next to the model it was made for: its llama-server `--spec-type`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<String>,
+    /// Id of an installed draft model that speeds this one up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speedup: Option<String>,
 }
 
 /// The llama.cpp build currently installed.

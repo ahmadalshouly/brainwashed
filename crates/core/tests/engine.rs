@@ -328,3 +328,78 @@ fn leaves_unrelated_processes_alone() {
     );
     other.kill().unwrap();
 }
+
+/// The start of a GGUF file: its architecture and one tensor name.
+fn gguf_header(arch: &str) -> Vec<u8> {
+    let string = |out: &mut Vec<u8>, s: &str| {
+        out.extend((s.len() as u64).to_le_bytes());
+        out.extend(s.as_bytes());
+    };
+    let mut out = b"GGUF".to_vec();
+    out.extend(3u32.to_le_bytes());
+    out.extend(1u64.to_le_bytes());
+    out.extend(1u64.to_le_bytes());
+    string(&mut out, "general.architecture");
+    out.extend(8u32.to_le_bytes());
+    string(&mut out, arch);
+    string(&mut out, "blk.0.attn_q.weight");
+    out.extend(1u32.to_le_bytes());
+    out.extend(64u64.to_le_bytes());
+    out.extend(0u32.to_le_bytes());
+    out.extend(0u64.to_le_bytes());
+    out
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn drafts_only_run_as_a_speedup() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = engine(dir.path(), "http://127.0.0.1:9|http://127.0.0.1:9");
+    let main = dir.path().join("Qwen3-4B-Q4_K_M.gguf");
+    let draft = dir.path().join("Qwen3-4B-DFlash-Q4_K_M.gguf");
+    std::fs::write(&main, gguf_header("qwen3")).unwrap();
+    std::fs::write(&draft, gguf_header("dflash")).unwrap();
+    let main = engine.import_model(&main).unwrap();
+    let draft = engine.import_model(&draft).unwrap();
+    assert_eq!(main.draft, None);
+    assert_eq!(draft.draft.as_deref(), Some("draft-dflash"));
+
+    // A draft alone is refused with a clear reason, before llama-server runs.
+    let err = engine.loadable(&draft.id).unwrap_err().to_string();
+    assert!(err.contains("DFlash speed-up"), "{err}");
+    assert!(engine.load_model(&draft.id).await.is_err());
+    assert!(engine.set_speedup(&draft.id, Some(&main.id)).is_err());
+    assert!(engine.set_speedup(&main.id, Some(&main.id)).is_err());
+
+    // Paired, the draft goes to llama-server next to the main model.
+    engine.set_speedup(&main.id, Some(&draft.id)).unwrap();
+    let args = dir.path().join("args.txt");
+    let fake = dir.path().join("llama-server");
+    std::fs::write(
+        &fake,
+        format!("#!/bin/sh\necho \"$@\" > {}\nexit 1\n", args.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut s = engine.settings();
+    s.llama_server_path = Some(fake);
+    engine.update_settings(s).unwrap();
+    let err = engine.load_model(&main.id).await.unwrap_err().to_string();
+    assert!(err.contains("speed-up"), "{err}");
+    let args = std::fs::read_to_string(args).unwrap();
+    assert!(
+        args.contains(&format!("--model-draft {}", draft.path.display())),
+        "{args}"
+    );
+    assert!(args.contains("--spec-type draft-dflash"), "{args}");
+
+    // Deleting the draft turns the speed-up off.
+    engine.delete_model(&draft.id).await.unwrap();
+    let main = engine
+        .models()
+        .into_iter()
+        .find(|m| m.id == main.id)
+        .unwrap();
+    assert_eq!(main.speedup, None);
+}

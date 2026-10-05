@@ -51,13 +51,15 @@ Admins can also call:
 
 | Area | Methods |
 |---|---|
-| Models | `loadModel { id }`, `unloadModel`, `hardware`, `catalog`, `downloadModel { repo, quant? }` (returns at once; poll `downloads`), `downloads`, `deleteModel { id }` |
+| Models | `loadModel { id }`, `unloadModel`, `hardware`, `catalog`, `downloadModel { repo, quant? }` (returns at once; poll `downloads`), `downloads`, `deleteModel { id }`, `setModelSpeedup { id, speedup: id \| null }` |
 | Skills | `setSkillEnabled { name, enabled }`, `skillList` (folder, skills, load errors), `skillSource { name }`, `saveSkill { source, previousName? }`, `deleteSkill { name }`, `communitySkills` (the community index), `previewSkill { spec }` (a community skill name or a link; returns the source, its SHA-256 and warnings), `installSkill { spec, sha256, replace? }` |
 | Settings | `settings`, `updateSettings { settings }` (only the fields given change; the tunnel token is never sent back, only `tunnel_token_set`), `access` (addresses, tunnel, relay, public URL), `checkForUpdate` |
 | Devices | `devices`, `createPairingOffer { role }` (includes `qr`, the code as rows of `0`/`1`), `removeDevice { id }`, `setDeviceRole { id, role }`, `renameDevice { id, name }` |
 | Cloud providers | `providers` (keys are never sent back, only `keySet` and `keyHint`), `saveProvider { provider: { id, name, baseUrl, apiKey?, models, members } }` (no `apiKey` keeps the saved key), `deleteProvider { id }`, `providerModels { baseUrl, apiKey?, id? }` |
 | API keys | `apiKeys`, `createApiKey { name, role? }` (returns `{ key, secret }`; the secret is shown only this once), `revokeApiKey { id }`. The keys are for the OpenAI-compatible API in [api.md](api.md). |
 | Audit | `auditLog { limit? }`, newest first |
+
+Speculative decoding drafts (DFlash, DSpark, EAGLE-3, Gemma 4 assistant GGUFs) are listed with `InstalledModel.draft` set to their llama-server `--spec-type`. They can't be loaded alone (`loadModel` refuses them with an explanation); `setModelSpeedup` pairs one with the main model it was made for, which then runs with `--model-draft`. Changing it reloads the model if it is running.
 
 A member calling an admin method gets `{ error }`. Devices paired before roles existed are admins. Every admin call that changes something, and every pairing, is written to the host's audit log.
 

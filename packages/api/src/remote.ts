@@ -313,6 +313,8 @@ export class RemoteHost {
   downloadModel = (repo: string, quant?: string) => this.call<null>("downloadModel", { repo, quant });
   downloads = () => this.call<DownloadStatus[]>("downloads");
   deleteModel = (id: string) => this.call<null>("deleteModel", { id });
+  /** Pairs a model with a draft model that speeds it up; null turns it off. */
+  setModelSpeedup = (id: string, speedup: string | null) => this.call<null>("setModelSpeedup", { id, speedup });
   setSkillEnabled = (name: string, enabled: boolean) => this.call<null>("setSkillEnabled", { name, enabled });
   skillList = () => this.call<SkillList>("skillList");
   skillSource = (name: string) => this.call<string>("skillSource", { name });
