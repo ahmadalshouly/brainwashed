@@ -282,6 +282,26 @@ async fn call(gw: &Gateway, device: &Device, method: &str, params: Value) -> Cal
                 .map_err(|e| e.to_string())?;
             Ok(json!({ "key": key, "secret": secret }))
         }
+        "apiUsage" => {
+            // The last `days` days (1 to 90): hourly up to two days, then
+            // daily, starting at midnight in the viewer's time zone.
+            let days = params["days"].as_u64().unwrap_or(7).clamp(1, 90);
+            let offset = params["utcOffset"]
+                .as_i64()
+                .unwrap_or(0)
+                .clamp(-14 * 3600, 14 * 3600);
+            let now = crate::server::now_secs();
+            let (since, bucket) = if days <= 2 {
+                (now - days * 86400 + 1, 3600)
+            } else {
+                let local_today = (now as i64 + offset).div_euclid(86400) * 86400 - offset;
+                (
+                    (local_today.max(0) as u64).saturating_sub((days - 1) * 86400),
+                    86400,
+                )
+            };
+            to_json(gw.inner.usage.summary(since, now, bucket, offset))
+        }
         "revokeApiKey" => {
             let id = str_param(&params, "id")?;
             if gw.inner.api_keys.revoke(id).map_err(|e| e.to_string())? {

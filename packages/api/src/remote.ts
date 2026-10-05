@@ -6,6 +6,7 @@ import { fromBase64, toBase64, utf8Decode, utf8Encode } from "./encoding";
 import type {
   AccessStatus,
   ApiKey,
+  ApiUsage,
   AuditEntry,
   CatalogItem,
   ChatEvent,
@@ -337,6 +338,9 @@ export class RemoteHost {
   /** Keys for the OpenAI-compatible API. */
   apiKeys = () => this.call<ApiKey[]>("apiKeys");
   createApiKey = (name: string, role: DeviceRole = "member") => this.call<NewApiKey>("createApiKey", { name, role });
+  /** API use over the last `days` days, in hours (up to 2 days) or days of this device's time zone. */
+  apiUsage = (days = 7) =>
+    this.call<ApiUsage>("apiUsage", { days, utcOffset: -new Date().getTimezoneOffset() * 60 });
   revokeApiKey = (id: string) => this.call<null>("revokeApiKey", { id });
   auditLog = (limit = 100) => this.call<AuditEntry[]>("auditLog", { limit });
   providers = () => this.call<ProviderInfo[]>("providers");

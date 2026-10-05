@@ -253,6 +253,40 @@ export interface ApiKey {
   lastUsed: number | null;
 }
 
+/** API use over a period (`apiUsage`). Failed replies count as requests and errors, not tokens. */
+export interface UsageTotals {
+  requests: number;
+  errors: number;
+  promptTokens: number;
+  completionTokens: number;
+  /** Generation speed, weighted by tokens written; 0 when unknown. */
+  tokensPerSecond: number;
+  /** Average time to the first word, in milliseconds. */
+  firstTokenMs: number | null;
+}
+
+export interface UsageBucket extends UsageTotals {
+  /** Unix seconds at the start of the hour or day. */
+  start: number;
+}
+
+/** Usage of one API key (`id` is the key's id) or one model. */
+export interface UsageGroup extends UsageTotals {
+  id: string;
+}
+
+export interface ApiUsage {
+  since: number;
+  until: number;
+  /** Seconds per bucket in `series`: 3600 or 86400. */
+  bucket: number;
+  totals: UsageTotals;
+  series: UsageBucket[];
+  /** Busiest first. */
+  byKey: UsageGroup[];
+  byModel: UsageGroup[];
+}
+
 /** What `createApiKey` returns: the new key's details and the key itself. */
 export interface NewApiKey {
   key: ApiKey;

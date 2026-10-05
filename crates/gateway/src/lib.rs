@@ -22,6 +22,7 @@ pub mod relay;
 mod replies;
 mod server;
 pub mod tunnel;
+pub mod usage;
 mod web;
 
 pub use api_keys::ApiKey;

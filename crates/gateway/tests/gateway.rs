@@ -869,6 +869,25 @@ async fn the_openai_api_uses_keys_skills_and_chat_defaults() {
         assert!(err["error"]["message"].is_string());
     }
 
+    // Both replies are in the usage stats, under the key and the model.
+    let usage = admin
+        .call("apiUsage", json!({ "days": 1, "utcOffset": 7200 }))
+        .await;
+    let usage = &usage["ok"];
+    assert_eq!(usage["totals"]["requests"], 2, "{usage}");
+    assert_eq!(usage["totals"]["errors"], 0);
+    assert_eq!(usage["byKey"][0]["id"], key_id.as_str());
+    assert_eq!(usage["byModel"][0]["id"], "acme/fast");
+    assert_eq!(usage["bucket"], 3600);
+    let hourly: u64 = usage["series"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["requests"].as_u64().unwrap())
+        .sum();
+    assert_eq!(hourly, 2);
+    assert!(usage["totals"]["firstTokenMs"].is_number());
+
     // A revoked key stops working.
     admin.call("revokeApiKey", json!({ "id": key_id })).await;
     let r = http
