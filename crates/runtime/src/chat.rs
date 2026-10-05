@@ -449,6 +449,7 @@ pub async fn stream_chat(
     let mut parser = SseParser::default();
     let mut filter = ToolCallFilter::default();
     let mut native: Vec<(String, String)> = Vec::new();
+    let mut calls = 0;
     let mut stream = res.bytes_stream();
     'read: while let Some(bytes) = stream.next().await {
         for data in parser.push(&bytes?) {
@@ -484,7 +485,7 @@ pub async fn stream_chat(
                 if let Some(text) = delta.content.filter(|t| !t.is_empty()) {
                     first_token.get_or_insert_with(std::time::Instant::now);
                     for piece in filter.push(&text) {
-                        emit(piece, &mut answer, &mut on_delta);
+                        emit(piece, &mut answer, &mut calls, &mut on_delta);
                     }
                 }
                 for call in delta.tool_calls {
@@ -500,15 +501,16 @@ pub async fn stream_chat(
         }
     }
     for piece in filter.finish() {
-        emit(piece, &mut answer, &mut on_delta);
+        emit(piece, &mut answer, &mut calls, &mut on_delta);
     }
     for (name, args) in native {
         let call = ToolCall {
+            id: String::new(),
             name,
             arguments: serde_json::from_str(&args).unwrap_or(serde_json::Value::String(args)),
             raw: None,
         };
-        emit(Piece::Call(call), &mut answer, &mut on_delta);
+        emit(Piece::Call(call), &mut answer, &mut calls, &mut on_delta);
     }
     on_delta(Delta::Stats(stats));
     Ok(answer)
@@ -516,14 +518,18 @@ pub async fn stream_chat(
 
 /// Passes on a piece of the answer. A call that only asks the person a
 /// question becomes part of the answer, on its own paragraph.
-fn emit(piece: Piece, answer: &mut String, on_delta: &mut impl FnMut(Delta)) {
+fn emit(piece: Piece, answer: &mut String, calls: &mut usize, on_delta: &mut impl FnMut(Delta)) {
     let text = match piece {
         Piece::Text(text) => text,
-        Piece::Call(call) => match call.as_question() {
+        Piece::Call(mut call) => match call.as_question() {
             Some(q) if answer.trim().is_empty() => q,
             Some(q) if answer.ends_with("\n\n") => q,
             Some(q) => format!("\n\n{q}"),
-            None => return on_delta(Delta::ToolCall(call)),
+            None => {
+                call.id = format!("call_{calls}");
+                *calls += 1;
+                return on_delta(Delta::ToolCall(call));
+            }
         },
     };
     answer.push_str(&text);

@@ -774,7 +774,8 @@ async fn rpc(State(gw): State<Gateway>, Json(req): Json<RpcRequest>) -> Response
 }
 
 /// One encrypted JSON frame per line: `{"event":…}` while streaming, then
-/// `{"done":"full answer"}` or `{"error":"…"}`.
+/// `{"done":"full answer"}` (with `toolCalls` when the model made any) or
+/// `{"error":"…"}`.
 ///
 /// The answer keeps being written when the phone disconnects. With a
 /// `replyId`, it is also kept for a while so `chatResume` can send the rest.
@@ -811,17 +812,27 @@ fn chat(
     let writer = reply.clone();
     tokio::spawn(async move {
         let events = writer.clone();
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = calls.clone();
         let result = engine
             .chat_with(
                 &messages,
                 &options,
                 model.as_deref(),
                 admin,
-                move |e: ChatEvent| events.push(json!({ "event": e }), false),
+                move |e: ChatEvent| {
+                    if let ChatEvent::ToolCall(c) = &e {
+                        seen.lock().unwrap().push(c.clone());
+                    }
+                    events.push(json!({ "event": e }), false)
+                },
             )
             .await;
+        let calls = std::mem::take(&mut *calls.lock().unwrap());
         writer.push(
             match result {
+                // Tool calls ride along so a stored chat can keep them.
+                Ok(answer) if !calls.is_empty() => json!({ "done": answer, "toolCalls": calls }),
                 Ok(answer) => json!({ "done": answer }),
                 Err(e) => json!({ "error": e.to_string() }),
             },

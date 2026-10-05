@@ -943,6 +943,7 @@ async fn the_openai_api_returns_tool_calls_the_model_makes() {
     assert_eq!(choice["finish_reason"], "tool_calls");
     let call = &choice["message"]["tool_calls"][0];
     assert_eq!(call["function"]["name"], "search");
+    assert_eq!(call["id"], "call_0");
     assert_eq!(call["function"]["arguments"], "{\"q\":\"x\"}");
 
     let text = ask(true).await.unwrap().text().await.unwrap();

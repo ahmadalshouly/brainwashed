@@ -10,6 +10,9 @@ use serde_json::{Map, Value};
 /// A tool call the model made.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ToolCall {
+    /// `call_0`, `call_1`... in the order the reply made them.
+    #[serde(default)]
+    pub id: String,
     /// Empty when the call couldn't be read.
     pub name: String,
     /// Named arguments; positional ones are under "0", "1"...
@@ -22,6 +25,7 @@ pub struct ToolCall {
 impl ToolCall {
     fn unreadable(raw: &str) -> Self {
         ToolCall {
+            id: String::new(),
             name: String::new(),
             arguments: Value::Object(Map::new()),
             raw: Some(raw.trim().to_string()),
@@ -184,6 +188,7 @@ fn from_json(v: &Value) -> Option<ToolCall> {
         other => other,
     };
     Some(ToolCall {
+        id: String::new(),
         name,
         arguments,
         raw: None,
@@ -206,6 +211,7 @@ fn deepseek(body: &str) -> Vec<ToolCall> {
                 .trim();
             match serde_json::from_str(json) {
                 Ok(arguments) => ToolCall {
+                    id: String::new(),
                     name: name.trim().to_string(),
                     arguments,
                     raw: None,
@@ -285,6 +291,7 @@ impl<'a> Python<'a> {
             }
         }
         Some(ToolCall {
+            id: String::new(),
             name,
             arguments: Value::Object(args),
             raw: None,
@@ -521,6 +528,7 @@ mod tests {
     #[test]
     fn questions_by_key() {
         let call = ToolCall {
+            id: String::new(),
             name: "ask_user".into(),
             arguments: json!({"question": "Which file?", "options": ["a", "b"]}),
             raw: None,

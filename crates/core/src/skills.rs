@@ -89,7 +89,7 @@ pub enum ChatEvent {
         text: String,
     },
     /// A tool the model tried to use. Nothing runs it; clients show it.
-    #[serde(rename = "toolCall")]
+    #[serde(rename = "tool_call")]
     ToolCall(ToolCall),
     /// Sent once, after the answer.
     Stats(ReplyStats),

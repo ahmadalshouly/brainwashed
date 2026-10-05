@@ -548,7 +548,7 @@ fn wire_call(
     streamed: bool,
 ) -> Value {
     let mut v = json!({
-        "id": format!("call_{i}"),
+        "id": call.id,
         "type": "function",
         "function": { "name": call.name, "arguments": call.arguments.to_string() },
     });

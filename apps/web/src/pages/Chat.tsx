@@ -251,7 +251,7 @@ export function ChatPage({
                 if (thinkingStarted && t.thoughtFor === undefined)
                   return { ...t, content: t.content + e.text, thoughtFor: Math.max(1, Math.round((Date.now() - thinkingStarted) / 1000)) };
                 return { ...t, content: t.content + e.text };
-              case "toolCall": {
+              case "tool_call": {
                 const { kind: _, ...call } = e;
                 return { ...t, toolCalls: [...(t.toolCalls ?? []), call] };
               }
