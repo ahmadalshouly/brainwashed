@@ -1131,3 +1131,179 @@ select:focus {
     display: table-cell;
   }
 }
+
+/* ----- charts (admin) ----- */
+
+:root {
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --series-1: #3987e5;
+    --series-2: #d95926;
+  }
+}
+
+:root[data-theme="dark"] {
+  --series-1: #3987e5;
+  --series-2: #d95926;
+}
+
+.chart {
+  position: relative;
+  width: 100%;
+}
+
+.chart svg {
+  display: block;
+  overflow: visible;
+}
+
+.chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.chart-tick {
+  fill: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-cross {
+  stroke: var(--muted);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+.chart-hit {
+  fill: transparent;
+  outline: none;
+}
+
+.chart-hit:focus-visible {
+  fill: var(--accent-soft);
+}
+
+.chart-dot {
+  stroke: var(--panel);
+  stroke-width: 2;
+}
+
+.chart-tip {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  margin-top: -4px;
+  pointer-events: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.12);
+  padding: 6px 10px;
+  font-size: 0.85em;
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.chart-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+.chart-tip-row .chart-key,
+.chart-key.line {
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+  vertical-align: 3px;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 0.85em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+/* ----- admin: API usage ----- */
+
+.usage-filters {
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.usage-filters button.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.tile {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+}
+
+.tile-value {
+  font-size: 1.6em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.usage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0 16px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.share {
+  height: 6px;
+  min-width: 60px;
+  border-radius: 99px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.share > div {
+  height: 100%;
+  background: var(--series-1);
+  border-radius: 99px;
+}
+
+@media (max-width: 760px) {
+  .usage-table th:nth-child(4),
+  .usage-table td:nth-child(4),
+  .usage-table th:nth-child(5),
+  .usage-table td:nth-child(5),
+  .usage-table th:nth-child(6),
+  .usage-table td:nth-child(6) {
+    display: none;
+  }
+}

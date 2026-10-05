@@ -5,6 +5,7 @@ use crate::devices::{Device, DeviceRole, DeviceStore};
 use crate::relay::{self, RelayClient, RelayStatus};
 use crate::replies::{self as reply_store, Replies, Reply};
 use crate::tunnel::{Tunnel, TunnelOptions, TunnelSpec, TunnelStatus};
+use crate::usage::UsageLog;
 use crate::{Error, Result};
 use axum::{
     body::Body,
@@ -102,6 +103,8 @@ pub(crate) struct Inner {
     pub(crate) audit: AuditLog,
     /// Keys for the OpenAI-compatible API.
     pub(crate) api_keys: ApiKeyStore,
+    /// What the API was used for, for the usage charts.
+    pub(crate) usage: UsageLog,
     data_dir: std::path::PathBuf,
     /// One-time pairing tokens: expiry (unix seconds) and the role they grant.
     offers: Mutex<HashMap<String, (u64, DeviceRole)>>,
@@ -142,6 +145,7 @@ impl Gateway {
                 devices: DeviceStore::open(&dir.join("devices.json"))?,
                 audit: AuditLog::new(&dir.join("audit.jsonl")),
                 api_keys: ApiKeyStore::open(&dir.join("api-keys.json"))?,
+                usage: UsageLog::open(&dir.join("api-usage.jsonl"), now_secs()),
                 data_dir: data_dir.to_path_buf(),
                 engine,
                 offers: Mutex::new(HashMap::new()),

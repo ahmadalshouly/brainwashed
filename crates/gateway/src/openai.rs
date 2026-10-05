@@ -14,6 +14,7 @@
 use crate::api_keys::ApiKey;
 use crate::devices::DeviceRole;
 use crate::server::{now_secs, Gateway};
+use crate::usage::UsageRecord;
 use axum::{
     body::Body,
     extract::State,
@@ -316,6 +317,53 @@ fn engine_error(e: &brainwashed_core::Error) -> Response {
     }
 }
 
+/// What a reply has done so far, for the usage log.
+#[derive(Default)]
+struct Progress {
+    first_token_ms: Option<u64>,
+    stats: Option<brainwashed_core::ReplyStats>,
+}
+
+impl Progress {
+    fn see(&mut self, e: &ChatEvent, started: std::time::Instant) {
+        match e {
+            ChatEvent::Content { .. } | ChatEvent::Reasoning { .. } => {
+                self.first_token_ms
+                    .get_or_insert(started.elapsed().as_millis() as u64);
+            }
+            ChatEvent::Stats(s) => self.stats = Some(s.clone()),
+            _ => {}
+        }
+    }
+}
+
+/// Writes a reply to the usage log when it ends, including when the caller
+/// goes away and the reply is stopped.
+struct Recorder {
+    gw: Gateway,
+    started: std::time::Instant,
+    progress: std::sync::Arc<std::sync::Mutex<Progress>>,
+    record: UsageRecord,
+    finished: bool,
+}
+
+impl Drop for Recorder {
+    fn drop(&mut self) {
+        let progress = self.progress.lock().unwrap();
+        if let Some(s) = &progress.stats {
+            self.record.prompt_tokens = s.prompt_tokens;
+            self.record.completion_tokens = s.tokens;
+            self.record.tokens_per_second = s.tokens_per_second;
+        }
+        self.record.first_token_ms = progress.first_token_ms;
+        self.record.total_ms = self.started.elapsed().as_millis() as u64;
+        if !self.finished {
+            self.record.error = Some("the caller disconnected".into());
+        }
+        self.gw.inner.usage.record(&self.record);
+    }
+}
+
 /// Stops the reply when the client goes away.
 struct AbortOnDrop(tokio::task::AbortHandle);
 
@@ -368,13 +416,39 @@ pub(crate) async fn chat_completions(
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Piece>();
     let task_model = model.clone();
+    let mut recorder = Recorder {
+        gw: gw.clone(),
+        started: std::time::Instant::now(),
+        progress: Default::default(),
+        record: UsageRecord {
+            at: now_secs(),
+            key_id: key.id.clone(),
+            model: model.clone(),
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            tokens_per_second: 0.0,
+            first_token_ms: None,
+            total_ms: 0,
+            stream: req.stream,
+            error: None,
+        },
+        finished: false,
+    };
     let task = tokio::spawn(async move {
         let events = tx.clone();
+        let progress = recorder.progress.clone();
+        let started = recorder.started;
         let result = engine
             .chat_with(&messages, &options, Some(&task_model), admin, move |e| {
+                progress.lock().unwrap().see(&e, started);
                 let _ = events.send(Piece::Event(e));
             })
             .await;
+        recorder.finished = true;
+        if let Err(e) = &result {
+            recorder.record.error = Some(e.to_string());
+        }
+        drop(recorder);
         let _ = tx.send(Piece::Done(result));
     });
     let guard = AbortOnDrop(task.abort_handle());
