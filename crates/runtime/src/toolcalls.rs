@@ -32,9 +32,9 @@ impl ToolCall {
         }
     }
 
-    /// The question, when the model "calls" a tool to ask the person
-    /// something. Shown as ordinary text, since that is all it is.
-    pub fn as_question(&self) -> Option<String> {
+    /// The question and choices, when the model calls a tool to ask the
+    /// person something: our own `ask_user`, or a similar one it made up.
+    pub fn ask_user(&self) -> Option<AskUser> {
         const ASKING: &[&str] = &[
             "ask_user",
             "ask",
@@ -48,13 +48,71 @@ impl ToolCall {
         }
         let args = self.arguments.as_object()?;
         let texts: Vec<&str> = args.values().filter_map(Value::as_str).collect();
-        match texts.as_slice() {
-            [one] if args.len() == 1 => Some(one.to_string()),
+        let question = match texts.as_slice() {
+            [one] if args.len() == 1 => one.to_string(),
             _ => ["question", "message", "text", "prompt", "query", "0"]
                 .iter()
-                .find_map(|k| args.get(*k)?.as_str().map(str::to_string)),
-        }
+                .find_map(|k| args.get(*k)?.as_str().map(str::to_string))?,
+        };
+        let options = ["options", "choices", "1"]
+            .iter()
+            .find_map(|k| args.get(*k)?.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|o| match o {
+                        Value::String(s) => Some(s.trim().to_string()),
+                        Value::Number(n) => Some(n.to_string()),
+                        _ => None,
+                    })
+                    .filter(|o| !o.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(AskUser { question, options })
     }
+}
+
+/// A question for the person, with choices they can tap.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct AskUser {
+    pub question: String,
+    pub options: Vec<String>,
+}
+
+impl AskUser {
+    /// The question as plain text, choices as a list, for clients that
+    /// can't show buttons and for the conversation history.
+    pub fn text(&self) -> String {
+        let mut out = self.question.clone();
+        for o in &self.options {
+            out.push_str(&format!("\n- {o}"));
+        }
+        out
+    }
+}
+
+/// The tool BrainWashed offers models that support tools, so they can ask
+/// the person to choose instead of guessing. In OpenAI's `tools` format.
+pub fn ask_user_tool() -> Value {
+    serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": "ask_user",
+            "description": "Ask the user a question when you need them to choose or clarify something before you can answer well. Give 2 to 5 short options they can tap. Only use it when you really need their input, and stop after calling it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": { "type": "string", "description": "The question, in the user's language." },
+                    "options": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "2 to 5 short answers the user can pick from."
+                    }
+                },
+                "required": ["question"]
+            }
+        }
+    })
 }
 
 /// Part of the answer, after tool calls are taken out.
@@ -455,7 +513,7 @@ mod tests {
             assert_eq!(calls.len(), 1);
             assert_eq!(calls[0].name, "ask_user");
             assert_eq!(
-                calls[0].as_question().as_deref(),
+                calls[0].ask_user().map(|a| a.question).as_deref(),
                 Some("Would you like a summary, or do you have a specific question?")
             );
         }
@@ -473,7 +531,7 @@ mod tests {
             json!({"city": "Berlin", "days": 3, "metric": true, "tags": ["a", "b"]})
         );
         assert_eq!(calls[1].arguments, json!({}));
-        assert_eq!(calls[0].as_question(), None);
+        assert_eq!(calls[0].ask_user(), None);
     }
 
     #[test]
@@ -533,6 +591,9 @@ mod tests {
             arguments: json!({"question": "Which file?", "options": ["a", "b"]}),
             raw: None,
         };
-        assert_eq!(call.as_question().as_deref(), Some("Which file?"));
+        let ask = call.ask_user().unwrap();
+        assert_eq!(ask.question, "Which file?");
+        assert_eq!(ask.options, ["a", "b"]);
+        assert_eq!(ask.text(), "Which file?\n- a\n- b");
     }
 }

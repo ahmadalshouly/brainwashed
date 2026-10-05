@@ -439,10 +439,17 @@ pub(crate) async fn chat_completions(
         let progress = recorder.progress.clone();
         let started = recorder.started;
         let result = engine
-            .chat_with(&messages, &options, Some(&task_model), admin, move |e| {
-                progress.lock().unwrap().see(&e, started);
-                let _ = events.send(Piece::Event(e));
-            })
+            .chat_with(
+                &messages,
+                &options,
+                Some(&task_model),
+                admin,
+                false,
+                move |e| {
+                    progress.lock().unwrap().see(&e, started);
+                    let _ = events.send(Piece::Event(e));
+                },
+            )
             .await;
         recorder.finished = true;
         if let Err(e) = &result {
@@ -469,10 +476,10 @@ pub(crate) async fn chat_completions(
                 Piece::Event(_) => {}
                 Piece::Done(Err(e)) => return engine_error(&e),
                 Piece::Done(Ok(mut answer)) => {
-                    let (readable, unreadable): (Vec<_>, Vec<_>) =
-                        calls.into_iter().partition(|c| !c.name.is_empty());
-                    for c in unreadable {
-                        answer.push_str(&format!("\n\n{}", c.raw.unwrap_or_default()));
+                    let (readable, as_text): (Vec<_>, Vec<_>) =
+                        calls.into_iter().partition(|c| call_text(c).is_none());
+                    for c in as_text {
+                        answer.push_str(&format!("\n\n{}", call_text(&c).unwrap_or_default()));
                     }
                     let mut message = json!({ "role": "assistant", "content": answer });
                     if !reasoning.is_empty() {
@@ -538,6 +545,15 @@ fn finish_reason(stats: Option<&brainwashed_core::ReplyStats>) -> &'static str {
     } else {
         "stop"
     }
+}
+
+/// Tool calls API clients get as text: ones that couldn't be read, and the
+/// model asking the person something (API clients didn't offer that tool).
+fn call_text(call: &brainwashed_core::runtime::toolcalls::ToolCall) -> Option<String> {
+    if call.name.is_empty() {
+        return Some(call.raw.clone().unwrap_or_default());
+    }
+    call.ask_user().map(|a| a.text())
 }
 
 /// A tool call the model made, in OpenAI's shape. Streamed calls carry
@@ -612,8 +628,8 @@ fn async_stream(
                 Some(Piece::Event(ChatEvent::Reasoning { text })) => {
                     sse(&(st.chunk)(json!({ "reasoning_content": text }), None))
                 }
-                Some(Piece::Event(ChatEvent::ToolCall(call))) if call.name.is_empty() => {
-                    let text = format!("\n\n{}", call.raw.unwrap_or_default());
+                Some(Piece::Event(ChatEvent::ToolCall(call))) if call_text(&call).is_some() => {
+                    let text = format!("\n\n{}", call_text(&call).unwrap_or_default());
                     sse(&(st.chunk)(json!({ "content": text }), None))
                 }
                 Some(Piece::Event(ChatEvent::ToolCall(call))) => {

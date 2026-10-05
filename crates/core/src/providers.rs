@@ -196,6 +196,7 @@ impl Engine {
                 .or(saved_key),
             model: None,
             llama: false,
+            ask_user: false,
         };
         Ok(chat::list_models(&self.inner.client, &endpoint).await?)
     }
@@ -252,6 +253,7 @@ impl Engine {
             api_key: provider.api_key,
             model: Some(model.to_string()),
             llama: false,
+            ask_user: false,
         })
     }
 }

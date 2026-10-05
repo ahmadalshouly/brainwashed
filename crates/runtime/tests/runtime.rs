@@ -335,6 +335,7 @@ async fn talks_to_cloud_providers() {
         api_key: Some("sk-good".into()),
         model: Some("gpt-a".into()),
         llama: false,
+        ask_user: false,
     };
 
     assert_eq!(

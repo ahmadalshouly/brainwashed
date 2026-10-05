@@ -874,7 +874,8 @@ async fn chat(engine: Engine) -> Result {
         }
         conversation.push(ChatMessage::new(Role::User, line));
         let mut thinking = false;
-        let answer = engine
+        let mut asked = None;
+        let mut answer = engine
             .chat(&conversation, &SamplingOptions::default(), |event| {
                 match event {
                     ChatEvent::Skills { names } if !names.is_empty() => {
@@ -885,6 +886,14 @@ async fn chat(engine: Engine) -> Result {
                         print!("(thinking...) ");
                     }
                     ChatEvent::Content { text } => print!("{text}"),
+                    ChatEvent::ToolCall(call) if call.name == "ask_user" => {
+                        let ask = call.ask_user().unwrap_or_default();
+                        print!("\n{}", ask.question);
+                        for (i, o) in ask.options.iter().enumerate() {
+                            print!("\n  {}. {o}", i + 1);
+                        }
+                        asked = Some(ask.text());
+                    }
                     ChatEvent::ToolCall(call) if call.name.is_empty() => {
                         print!("\n(the model tried to use a tool BrainWashed doesn't have)")
                     }
@@ -898,6 +907,13 @@ async fn chat(engine: Engine) -> Result {
             })
             .await?;
         println!("\n");
+        // The question stays in the history, so the reply makes sense.
+        if let Some(ask) = asked {
+            if !answer.is_empty() {
+                answer.push_str("\n\n");
+            }
+            answer.push_str(&ask);
+        }
         conversation.push(ChatMessage::new(Role::Assistant, answer));
     }
     engine.unload().await?;

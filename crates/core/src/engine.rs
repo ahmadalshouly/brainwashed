@@ -124,6 +124,9 @@ pub(crate) struct Inner {
     pub(crate) loaded_context: RwLock<Option<u32>>,
     /// The loaded model can look at pictures.
     vision: RwLock<bool>,
+    /// The loaded model's chat template knows tools, so it can ask the
+    /// person to pick an option.
+    tools: RwLock<bool>,
     pub(crate) events: broadcast::Sender<Event>,
     pub(crate) skills: RwLock<SkillState>,
 }
@@ -160,6 +163,7 @@ impl Engine {
                 base_url: RwLock::new(None),
                 loaded_context: RwLock::new(None),
                 vision: RwLock::new(false),
+                tools: RwLock::new(false),
                 events: broadcast::channel(256).0,
                 skills: RwLock::new(skills),
                 config,
@@ -534,6 +538,7 @@ impl Engine {
         if let Some(old) = server.take() {
             *self.inner.base_url.write().unwrap() = None;
             *self.inner.vision.write().unwrap() = false;
+            *self.inner.tools.write().unwrap() = false;
             let _ = old.stop().await;
         }
 
@@ -574,6 +579,7 @@ impl Engine {
                 *self.inner.loaded_context.write().unwrap() = started.context_size();
                 *self.inner.vision.write().unwrap() =
                     model.mmproj.as_ref().is_some_and(|p| p.exists());
+                *self.inner.tools.write().unwrap() = started.supports_tools();
                 *server = Some(started);
                 self.edit_settings(|s| s.active_model = Some(model.id.clone()))?;
                 self.set_state(EngineState::Ready { model: model.id });
@@ -621,6 +627,7 @@ impl Engine {
         let mut server = self.inner.server.lock().await;
         *self.inner.base_url.write().unwrap() = None;
         *self.inner.vision.write().unwrap() = false;
+        *self.inner.tools.write().unwrap() = false;
         if let Some(old) = server.take() {
             old.stop().await.map_err(Error::from)?;
         }
@@ -643,26 +650,31 @@ impl Engine {
 
     /// Streams the local model's reply to `conversation`. The first event
     /// names the skills used; the rest are pieces of the answer, then stats.
-    /// Returns the full answer.
+    /// Returns the full answer. The model may ask the person to pick an
+    /// option (a `tool_call` named `ask_user`); their pick comes back as the
+    /// next user message.
     pub async fn chat(
         &self,
         conversation: &[ChatMessage],
         sampling: &SamplingOptions,
         on_event: impl FnMut(ChatEvent),
     ) -> Result<String> {
-        self.chat_with(conversation, sampling, None, true, on_event)
+        self.chat_with(conversation, sampling, None, true, true, on_event)
             .await
     }
 
     /// Like [`Engine::chat`], with the model picked by id: `local` (or None)
     /// for the model on this computer, `<provider>/<model>` for a cloud
     /// provider. `admin` decides which provider models are allowed.
+    /// `ask_user` offers the local model the tool to ask the person to pick
+    /// an option, for clients that can show the question.
     pub async fn chat_with(
         &self,
         conversation: &[ChatMessage],
         sampling: &SamplingOptions,
         model: Option<&str>,
         admin: bool,
+        ask_user: bool,
         mut on_event: impl FnMut(ChatEvent),
     ) -> Result<String> {
         // The chat's own settings win; the admin's defaults fill the rest.
@@ -686,7 +698,9 @@ impl Engine {
                         .unwrap()
                         .clone()
                         .ok_or_else(|| Error::Invalid("no model is loaded yet".into()))?;
-                    (chat::Endpoint::llama(base_url), self.vision(), None)
+                    let mut endpoint = chat::Endpoint::llama(base_url);
+                    endpoint.ask_user = ask_user && *self.inner.tools.read().unwrap();
+                    (endpoint, self.vision(), None)
                 }
             };
         let asks_about_pictures = conversation
