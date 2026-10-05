@@ -610,6 +610,15 @@ select:focus {
   border-top: 1px solid var(--border);
 }
 
+.list-row.wrap {
+  flex-wrap: wrap;
+}
+
+.list-row select {
+  max-width: 100%;
+  min-width: 0;
+}
+
 .list-row:first-child {
   border-top: none;
 }

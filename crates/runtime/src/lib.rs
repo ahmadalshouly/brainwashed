@@ -5,6 +5,7 @@
 pub mod catalog;
 pub mod chat;
 pub mod download;
+pub mod gguf;
 pub mod hardware;
 pub mod llama;
 pub mod release;

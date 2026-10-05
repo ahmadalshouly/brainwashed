@@ -203,6 +203,13 @@ export interface InstalledModel {
   size: number;
   /** Vision projector. Set when the model can look at pictures. */
   mmproj?: string;
+  /**
+   * Set when the file is a speculative decoding draft (DFlash, EAGLE-3...),
+   * which can't run alone: llama-server's `--spec-type` for it.
+   */
+  draft?: string;
+  /** Id of the installed draft model that speeds this one up. */
+  speedup?: string;
 }
 
 export interface CatalogItem {

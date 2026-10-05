@@ -49,7 +49,10 @@ export function ModelsPage() {
         title="Running now"
         actions={
           current && (
-            <button disabled={action.busy} onClick={() => action.run(async () => (await remote.unloadModel(), refreshState()))}>
+            <button
+              disabled={action.busy}
+              onClick={() => action.run(async () => (await remote.unloadModel(), refreshState()))}
+            >
               Stop model
             </button>
           )
@@ -92,38 +95,69 @@ export function ModelsPage() {
       <Card title="Installed">
         {models.value?.length === 0 && <p className="muted">No models yet. Download one below.</p>}
         <div className="list">
-          {models.value?.map((m) => (
-            <div key={m.id} className="list-row">
-              <div className="grow">
-                <strong>{m.name}</strong> {m.mmproj && <Badge>sees pictures</Badge>}
-                <div className="muted small">
-                  {formatBytes(m.size)}
-                  {m.repo ? ` · ${m.repo}` : ""}
+          {models.value?.map((m) => {
+            const speedups = models.value!.filter((d) => d.draft);
+            return (
+              <div key={m.id} className="list-row wrap">
+                <div className="grow">
+                  <strong>{m.name}</strong> {m.mmproj && <Badge>sees pictures</Badge>}
+                  {m.draft && <Badge>speed-up</Badge>}
+                  <div className="muted small">
+                    {formatBytes(m.size)}
+                    {m.repo ? ` · ${m.repo}` : ""}
+                  </div>
+                  {m.draft && (
+                    <div className="muted small">
+                      Makes the model it was trained for answer faster. It can't run on its own: pick it as the speed-up
+                      of that model.
+                    </div>
+                  )}
                 </div>
-              </div>
-              {m.id === current ? (
-                <Badge kind="ok">{state?.state === "ready" ? "Running" : "Loading"}</Badge>
-              ) : (
+                {!m.draft && speedups.length > 0 && (
+                  <select
+                    aria-label={`Speed-up for ${m.name}`}
+                    value={m.speedup ?? ""}
+                    disabled={action.busy}
+                    onChange={(e) =>
+                      action.run(async () => {
+                        await remote.setModelSpeedup(m.id, e.target.value || null);
+                        models.reload();
+                        refreshState();
+                      })
+                    }
+                  >
+                    <option value="">No speed-up</option>
+                    {speedups.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        Speed up with {d.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {m.draft ? null : m.id === current ? (
+                  <Badge kind="ok">{state?.state === "ready" ? "Running" : "Loading"}</Badge>
+                ) : (
+                  <button
+                    className="primary"
+                    disabled={action.busy || state?.state === "loading"}
+                    onClick={() => action.run(async () => (await remote.loadModel(m.id), refreshState()))}
+                  >
+                    Use
+                  </button>
+                )}
                 <button
-                  className="primary"
-                  disabled={action.busy || state?.state === "loading"}
-                  onClick={() => action.run(async () => (await remote.loadModel(m.id), refreshState()))}
+                  className="danger-text"
+                  disabled={action.busy}
+                  onClick={() => {
+                    if (confirm(`Delete ${m.name}? This frees ${formatBytes(m.size)}.`))
+                      action.run(async () => (await remote.deleteModel(m.id), models.reload(), refreshState()));
+                  }}
                 >
-                  Use
+                  Delete
                 </button>
-              )}
-              <button
-                className="danger-text"
-                disabled={action.busy}
-                onClick={() => {
-                  if (confirm(`Delete ${m.name}? This frees ${formatBytes(m.size)}.`))
-                    action.run(async () => (await remote.deleteModel(m.id), models.reload(), refreshState()));
-                }}
-              >
-                Delete
-              </button>
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
       </Card>
 
@@ -134,7 +168,8 @@ export function ModelsPage() {
             return (
               <div key={c.repo} className="list-row">
                 <div className="grow">
-                  <strong>{c.name}</strong> {c.fits ? <Badge kind="ok">fits</Badge> : <Badge kind="warn">needs more memory</Badge>}
+                  <strong>{c.name}</strong>{" "}
+                  {c.fits ? <Badge kind="ok">fits</Badge> : <Badge kind="warn">needs more memory</Badge>}
                   {c.vision && <Badge>sees pictures</Badge>}
                   <div className="muted small">
                     {c.description} · {Math.round(c.params_b * 10) / 10}B parameters · {c.license}
@@ -167,8 +202,18 @@ export function ModelsPage() {
             if (repo.trim()) download(repo.trim(), quant.trim()).then(() => setRepo(""));
           }}
         >
-          <input className="grow" placeholder="owner/model-GGUF" value={repo} onChange={(e) => setRepo(e.target.value)} />
-          <input style={{ width: 120 }} placeholder="Quantization" value={quant} onChange={(e) => setQuant(e.target.value)} />
+          <input
+            className="grow"
+            placeholder="owner/model-GGUF"
+            value={repo}
+            onChange={(e) => setRepo(e.target.value)}
+          />
+          <input
+            style={{ width: 120 }}
+            placeholder="Quantization"
+            value={quant}
+            onChange={(e) => setQuant(e.target.value)}
+          />
           <button className="primary" disabled={!repo.trim() || action.busy}>
             Download
           </button>

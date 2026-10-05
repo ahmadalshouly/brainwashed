@@ -1,5 +1,6 @@
 //! Runs and supervises a `llama-server` process.
 
+use crate::gguf::DraftKind;
 use crate::{Error, Result};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -21,6 +22,8 @@ pub struct ServerOptions {
     pub model: PathBuf,
     /// Vision projector, for models that can look at pictures.
     pub mmproj: Option<PathBuf>,
+    /// A draft model that speeds up this one (speculative decoding).
+    pub draft: Option<(PathBuf, DraftKind)>,
     pub context_size: u32,
     /// Layers to offload to the GPU. A large number means "all of them".
     pub gpu_layers: u32,
@@ -65,6 +68,11 @@ impl LlamaServer {
             .kill_on_drop(true);
         if let Some(mmproj) = &opts.mmproj {
             cmd.arg("--mmproj").arg(mmproj);
+        }
+        if let Some((draft, kind)) = &opts.draft {
+            cmd.arg("--model-draft")
+                .arg(draft)
+                .args(["--spec-type", kind.spec_type()]);
         }
         // Prebuilt releases ship their shared libraries next to the binary.
         if cfg!(target_os = "linux") {

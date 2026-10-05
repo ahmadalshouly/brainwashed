@@ -6,6 +6,7 @@ use brainwashed_runtime::{
     catalog::{self, CatalogEntry},
     chat::{self, SamplingOptions},
     download,
+    gguf::{self, DraftKind},
     llama::{self, LlamaServer, ServerOptions},
     release, Attachment, ChatMessage, Hardware, Role,
 };
@@ -140,7 +141,11 @@ impl Engine {
             .build()
             .map_err(brainwashed_runtime::Error::from)?;
         let settings: Settings = store::load(&config.data_dir.join("settings.json"))?;
-        let models: Vec<InstalledModel> = store::load(&config.data_dir.join("models.json"))?;
+        let mut models: Vec<InstalledModel> = store::load(&config.data_dir.join("models.json"))?;
+        // Models installed before drafts were recognised.
+        for m in &mut models {
+            m.draft = draft_of(&m.path);
+        }
         kill_stale_server(&config.data_dir);
         let skills = SkillState::open(&config.data_dir.join("skills"))?;
         Ok(Engine {
@@ -368,10 +373,16 @@ impl Engine {
             name: file_name.trim_end_matches(".gguf").to_string(),
             repo: Some(repo.to_string()),
             size: std::fs::metadata(&dest)?.len(),
+            draft: draft_of(&dest),
+            speedup: None,
             path: dest,
             mmproj,
         };
         let mut models = self.models();
+        let mut model = model;
+        if let Some(old) = models.iter().find(|m| m.id == model.id) {
+            model.speedup = old.speedup.clone();
+        }
         models.retain(|m| m.id != model.id);
         models.push(model.clone());
         self.save_models(models)?;
@@ -392,6 +403,8 @@ impl Engine {
             size: std::fs::metadata(path)?.len(),
             path: path.to_path_buf(),
             mmproj: None,
+            draft: draft_of(path),
+            speedup: None,
         };
         let mut models = self.models();
         models.retain(|m| m.id != model.id);
@@ -409,6 +422,11 @@ impl Engine {
         let mut models = self.models();
         if let Some(pos) = models.iter().position(|m| m.id == id) {
             let model = models.remove(pos);
+            for m in &mut models {
+                if m.speedup.as_deref() == Some(id) {
+                    m.speedup = None;
+                }
+            }
             if model.path.starts_with(self.models_dir()) {
                 let _ = tokio::fs::remove_file(&model.path).await;
                 if let Some(mmproj) = &model.mmproj {
@@ -490,13 +508,27 @@ impl Engine {
         Ok(binary)
     }
 
-    /// Loads a model, replacing any model already loaded.
-    pub async fn load_model(&self, id: &str) -> Result<()> {
+    /// The installed model `id`, or why it can't be loaded on its own.
+    pub fn loadable(&self, id: &str) -> Result<InstalledModel> {
         let model = self
             .models()
             .into_iter()
             .find(|m| m.id == id)
             .ok_or_else(|| Error::Invalid(format!("no installed model `{id}`")))?;
+        match draft_kind_of(&model.path) {
+            Some(kind) => Err(Error::Invalid(not_standalone(&model.name, kind))),
+            None => Ok(model),
+        }
+    }
+
+    /// Loads a model, replacing any model already loaded.
+    pub async fn load_model(&self, id: &str) -> Result<()> {
+        let model = self.loadable(id)?;
+        // A speed-up that was deleted, or isn't a draft after all, is skipped.
+        let draft = model.speedup.as_ref().and_then(|d| {
+            let d = self.models().into_iter().find(|m| &m.id == d)?;
+            Some((d.name.clone(), d.path.clone(), draft_kind_of(&d.path)?))
+        });
 
         let mut server = self.inner.server.lock().await;
         if let Some(old) = server.take() {
@@ -515,14 +547,21 @@ impl Engine {
                 binary,
                 model: model.path.clone(),
                 mmproj: model.mmproj.clone().filter(|p| p.exists()),
+                draft: draft.as_ref().map(|(_, path, kind)| (path.clone(), *kind)),
                 context_size: settings.context_size,
                 gpu_layers: settings.gpu_layers,
                 port: None,
             };
-            Ok::<_, Error>(
-                LlamaServer::start(&opts, &self.inner.local, self.inner.config.load_timeout)
-                    .await?,
-            )
+            LlamaServer::start(&opts, &self.inner.local, self.inner.config.load_timeout)
+                .await
+                .map_err(|e| match &draft {
+                    Some((name, _, _)) => Error::Invalid(format!(
+                        "{} didn't start with the speed-up {name}. A speed-up only works with the \
+                         model it was made for; turn it off on the Models page if this keeps happening.\n{e}",
+                        model.name
+                    )),
+                    None => e.into(),
+                })
         }
         .await;
 
@@ -547,6 +586,35 @@ impl Engine {
                 Err(e)
             }
         }
+    }
+
+    /// Sets or clears the draft model that speeds up `id`. Applies the next
+    /// time the model loads.
+    pub fn set_speedup(&self, id: &str, draft: Option<&str>) -> Result<()> {
+        let mut models = self.models();
+        if let Some(d) = draft {
+            let ok = models
+                .iter()
+                .find(|m| m.id == d)
+                .is_some_and(|m| draft_kind_of(&m.path).is_some());
+            if !ok {
+                return Err(Error::Invalid(format!(
+                    "`{d}` isn't an installed speed-up model"
+                )));
+            }
+        }
+        let model = models
+            .iter_mut()
+            .find(|m| m.id == id)
+            .ok_or_else(|| Error::Invalid(format!("no installed model `{id}`")))?;
+        if model.draft.is_some() {
+            return Err(Error::Invalid(format!(
+                "{} is itself a speed-up",
+                model.name
+            )));
+        }
+        model.speedup = draft.map(str::to_string);
+        self.save_models(models)
     }
 
     pub async fn unload(&self) -> Result<()> {
@@ -735,4 +803,22 @@ fn make_executable(path: &Path) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn make_executable(_: &Path) -> std::io::Result<()> {
     Ok(())
+}
+
+fn draft_kind_of(path: &Path) -> Option<DraftKind> {
+    gguf::draft_kind(path).ok().flatten()
+}
+
+fn draft_of(path: &Path) -> Option<String> {
+    draft_kind_of(path).map(|k| k.spec_type().to_string())
+}
+
+/// Why a draft model can't be loaded on its own.
+fn not_standalone(name: &str, kind: DraftKind) -> String {
+    format!(
+        "{name} is a {} speed-up for another model, not a model you can chat with on its own. \
+         Download the model it was made for, then pick {name} as that model's speed-up on the \
+         Models page.",
+        kind.label()
+    )
 }
