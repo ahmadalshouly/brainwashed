@@ -4,7 +4,8 @@
   --glass: rgb(255 255 255 / 0.58);
   --glass-strong: rgb(255 255 255 / 0.82);
   --glass-border: rgb(255 255 255 / 0.75);
-  --glass-shadow: 0 1px 1px rgb(20 20 50 / 0.04), 0 10px 30px -12px rgb(40 30 90 / 0.18);
+  --glass-shadow:
+    0 1px 1px rgb(20 20 50 / 0.04), 0 10px 30px -12px rgb(40 30 90 / 0.18);
   --ink: #15131f;
   --ink-2: #5d5a6e;
   --ink-3: #8b889c;
@@ -34,7 +35,8 @@
     --glass: rgb(28 26 40 / 0.55);
     --glass-strong: rgb(30 28 44 / 0.88);
     --glass-border: rgb(255 255 255 / 0.08);
-    --glass-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 20px 40px -20px rgb(0 0 0 / 0.6);
+    --glass-shadow:
+      0 1px 0 rgb(255 255 255 / 0.04) inset, 0 20px 40px -20px rgb(0 0 0 / 0.6);
     --ink: #f1f0f7;
     --ink-2: #b4b1c6;
     --ink-3: #807c95;
@@ -54,7 +56,8 @@
   --glass: rgb(28 26 40 / 0.55);
   --glass-strong: rgb(30 28 44 / 0.88);
   --glass-border: rgb(255 255 255 / 0.08);
-  --glass-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 20px 40px -20px rgb(0 0 0 / 0.6);
+  --glass-shadow:
+    0 1px 0 rgb(255 255 255 / 0.04) inset, 0 20px 40px -20px rgb(0 0 0 / 0.6);
   --ink: #f1f0f7;
   --ink-2: #b4b1c6;
   --ink-3: #807c95;
@@ -157,8 +160,16 @@
   border-radius: 50%;
   background:
     radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.9), transparent 34%),
-    radial-gradient(circle at 70% 75%, color-mix(in srgb, var(--accent) 80%, #ec4899), transparent 62%),
-    linear-gradient(140deg, color-mix(in srgb, var(--accent) 70%, #a78bfa), color-mix(in srgb, var(--accent) 60%, #f472b6));
+    radial-gradient(
+      circle at 70% 75%,
+      color-mix(in srgb, var(--accent) 80%, #ec4899),
+      transparent 62%
+    ),
+    linear-gradient(
+      140deg,
+      color-mix(in srgb, var(--accent) 70%, #a78bfa),
+      color-mix(in srgb, var(--accent) 60%, #f472b6)
+    );
   box-shadow:
     0 0 0 1px rgb(255 255 255 / 0.25) inset,
     0 8px 24px -6px color-mix(in srgb, var(--accent) 60%, transparent);
@@ -692,7 +703,11 @@
   font-size: clamp(1.9em, 4vw, 2.6em);
   font-weight: 650;
   letter-spacing: -0.02em;
-  background: linear-gradient(120deg, var(--ink), color-mix(in srgb, var(--accent) 75%, var(--ink)));
+  background: linear-gradient(
+    120deg,
+    var(--ink),
+    color-mix(in srgb, var(--accent) 75%, var(--ink))
+  );
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -860,7 +875,11 @@
   font-weight: 700;
   letter-spacing: 0.04em;
   color: #fff;
-  background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 85%, #000), var(--accent));
+  background: linear-gradient(
+    140deg,
+    color-mix(in srgb, var(--accent) 85%, #000),
+    var(--accent)
+  );
 }
 
 .msg.assistant {
@@ -980,7 +999,12 @@
 }
 
 .shimmer {
-  background: linear-gradient(90deg, var(--ink-3) 0%, var(--ink) 50%, var(--ink-3) 100%);
+  background: linear-gradient(
+    90deg,
+    var(--ink-3) 0%,
+    var(--ink) 50%,
+    var(--ink-3) 100%
+  );
   background-size: 200% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -1873,7 +1897,45 @@
 
 @media (max-width: 760px) {
   .stage-scroll {
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 40px, #000 96px);
-    mask-image: linear-gradient(to bottom, transparent 0, transparent 40px, #000 96px);
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 40px,
+      #000 96px
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 40px,
+      #000 96px
+    );
   }
+}
+
+.ask-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+
+.ask-options button {
+  max-width: 100%;
+  padding: 8px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ask-options button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+.ask-options button:disabled {
+  color: var(--ink-3);
+  cursor: default;
 }

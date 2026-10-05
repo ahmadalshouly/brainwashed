@@ -820,6 +820,7 @@ fn chat(
                 &options,
                 model.as_deref(),
                 admin,
+                true,
                 move |e: ChatEvent| {
                     if let ChatEvent::ToolCall(c) = &e {
                         seen.lock().unwrap().push(c.clone());

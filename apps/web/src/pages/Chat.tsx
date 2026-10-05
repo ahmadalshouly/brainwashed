@@ -1,8 +1,22 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { HostReplyError, type ChatMessage, type ChatModel, type ChatOptions, type InstalledModel } from "@brainwashed/api";
+import {
+  HostReplyError,
+  type ChatMessage,
+  type ChatModel,
+  type ChatOptions,
+  type InstalledModel,
+  type ToolCall,
+} from "@brainwashed/api";
 import { Markdown } from "../markdown";
 import { Icon, type IconName } from "../icons";
-import { ACCEPT, MAX_ATTACHMENTS, dataUrl, extension, prepare, type Draft } from "../attachments";
+import {
+  ACCEPT,
+  MAX_ATTACHMENTS,
+  dataUrl,
+  extension,
+  prepare,
+  type Draft,
+} from "../attachments";
 import {
   STYLES,
   deleteConversation,
@@ -42,25 +56,79 @@ function saveModelChoice(id: string) {
 }
 
 const SUGGESTIONS: { icon: IconName; title: string; prompt: string }[] = [
-  { icon: "lightbulb", title: "Explain something", prompt: "Explain how a VPN works, simply" },
-  { icon: "mail", title: "Write an email", prompt: "Write a polite email asking for a deadline extension" },
-  { icon: "code", title: "Help with code", prompt: "Write a Python function that removes duplicates from a list, keeping order" },
-  { icon: "sparkle", title: "Plan my week", prompt: "Plan my meals for this week" },
+  {
+    icon: "lightbulb",
+    title: "Explain something",
+    prompt: "Explain how a VPN works, simply",
+  },
+  {
+    icon: "mail",
+    title: "Write an email",
+    prompt: "Write a polite email asking for a deadline extension",
+  },
+  {
+    icon: "code",
+    title: "Help with code",
+    prompt:
+      "Write a Python function that removes duplicates from a list, keeping order",
+  },
+  {
+    icon: "sparkle",
+    title: "Plan my week",
+    prompt: "Plan my meals for this week",
+  },
 ];
 
 function greeting(): string {
   const h = new Date().getHours();
-  return h < 5 ? "Up late?" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  return h < 5
+    ? "Up late?"
+    : h < 12
+      ? "Good morning"
+      : h < 18
+        ? "Good afternoon"
+        : "Good evening";
+}
+
+/** The question when the model asks the person to pick an option. */
+function askOf(c: ToolCall): { question: string; options: string[] } | null {
+  if (c.name !== "ask_user" || !c.arguments || typeof c.arguments !== "object")
+    return null;
+  const a = c.arguments as { question?: unknown; options?: unknown };
+  if (typeof a.question !== "string") return null;
+  const options = Array.isArray(a.options)
+    ? a.options.filter((o): o is string => typeof o === "string" && !!o.trim())
+    : [];
+  return { question: a.question, options };
+}
+
+/** A turn's text with any question it asked, so the model sees what was asked. */
+function fullText(t: Turn): string {
+  const asks = (t.toolCalls ?? []).map(askOf).filter((a) => a !== null);
+  return [
+    t.content,
+    ...asks.map((a) =>
+      [a.question, ...a.options.map((o) => `- ${o}`)].join("\n"),
+    ),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /** Messages as the model gets them: no errors, no UI-only fields. */
 function wire(turns: Turn[], instructions?: string): ChatMessage[] {
   const out: ChatMessage[] = [];
-  if (instructions?.trim()) out.push({ role: "system", content: instructions.trim() });
+  if (instructions?.trim())
+    out.push({ role: "system", content: instructions.trim() });
   for (const t of turns) {
-    if (t.error && !t.content) continue;
-    if (!t.content && !t.attachments?.length) continue;
-    out.push(t.attachments?.length ? { role: t.role, content: t.content, attachments: t.attachments } : { role: t.role, content: t.content });
+    const content = fullText(t);
+    if (t.error && !content) continue;
+    if (!content && !t.attachments?.length) continue;
+    out.push(
+      t.attachments?.length
+        ? { role: t.role, content, attachments: t.attachments }
+        : { role: t.role, content },
+    );
   }
   return out;
 }
@@ -107,20 +175,39 @@ export function ChatPage({
       remote.chatModels().catch(async (): Promise<ChatModel[]> => {
         // Hosts before cloud providers only have the local model.
         const s = await remote.state();
-        return s.state === "ready" ? [{ id: "local", name: s.model, provider: null, vision: false, cloud: false }] : [];
+        return s.state === "ready"
+          ? [
+              {
+                id: "local",
+                name: s.model,
+                provider: null,
+                vision: false,
+                cloud: false,
+              },
+            ]
+          : [];
       }),
     [remote, state?.state, state && "model" in state ? state.model : ""],
     20000,
   );
   // The admin's chat defaults: whatever a chat leaves unset.
-  const hostDefaults = useLoad<ChatOptions>(() => remote.chatDefaults().catch(() => ({})), [remote], 60000);
+  const hostDefaults = useLoad<ChatOptions>(
+    () => remote.chatDefaults().catch(() => ({})),
+    [remote],
+    60000,
+  );
   const defaults = hostDefaults.value ?? {};
-  const installed = useLoad<InstalledModel[]>(() => (admin ? remote.models() : Promise.resolve([])), [remote, admin, state?.state], 30000);
+  const installed = useLoad<InstalledModel[]>(
+    () => (admin ? remote.models() : Promise.resolve([])),
+    [remote, admin, state?.state],
+    30000,
+  );
   const [modelId, setModelId] = useState(loadModelChoice);
   const models = chatModels.value ?? [];
   const model = models.find((m) => m.id === modelId) ?? models[0] ?? null;
   const ready = !!model;
-  const loading = state?.state === "loading" || state?.state === "installingRuntime";
+  const loading =
+    state?.state === "loading" || state?.state === "installingRuntime";
   const pickModel = (id: string) => {
     setModelId(id);
     saveModelChoice(id);
@@ -157,7 +244,10 @@ export function ChatPage({
   const [input, setInput] = useState("");
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [busy, setBusy] = useState(false);
-  const [editing, setEditing] = useState<{ index: number; text: string } | null>(null);
+  const [editing, setEditing] = useState<{
+    index: number;
+    text: string;
+  } | null>(null);
   const [prefs, setPrefsState] = useState<ChatPrefs>(loadPrefs);
   const setPrefs = (p: ChatPrefs) => {
     setPrefsState(p);
@@ -181,12 +271,19 @@ export function ChatPage({
   chatsRef.current = chats;
 
   /** Saves a conversation after a reply, keeping its title, pin and instructions. */
-  async function persist(id: string, nextTurns: Turn[], patch: Partial<Conversation> = {}) {
+  async function persist(
+    id: string,
+    nextTurns: Turn[],
+    patch: Partial<Conversation> = {},
+  ) {
     if (!nextTurns.length) return;
     const prev = chatsRef.current.find((c) => c.id === id);
     const saved: Conversation = {
       id,
-      title: prev?.title && prev.title !== "New chat" ? prev.title : titleFor(nextTurns),
+      title:
+        prev?.title && prev.title !== "New chat"
+          ? prev.title
+          : titleFor(nextTurns),
       turns: nextTurns,
       updatedAt: Date.now(),
       pinned: prev?.pinned,
@@ -249,7 +346,14 @@ export function ChatPage({
                 return { ...t, reasoning: (t.reasoning ?? "") + e.text };
               case "content":
                 if (thinkingStarted && t.thoughtFor === undefined)
-                  return { ...t, content: t.content + e.text, thoughtFor: Math.max(1, Math.round((Date.now() - thinkingStarted) / 1000)) };
+                  return {
+                    ...t,
+                    content: t.content + e.text,
+                    thoughtFor: Math.max(
+                      1,
+                      Math.round((Date.now() - thinkingStarted) / 1000),
+                    ),
+                  };
                 return { ...t, content: t.content + e.text };
               case "tool_call": {
                 const { kind: _, ...call } = e;
@@ -264,7 +368,10 @@ export function ChatPage({
             }
           }),
         controller.signal,
-        { options: toOptions(prefs), model: model && model.id !== "local" ? model.id : undefined },
+        {
+          options: toOptions(prefs),
+          model: model && model.id !== "local" ? model.id : undefined,
+        },
       );
     } catch (e) {
       if (controller.signal.aborted) {
@@ -275,7 +382,18 @@ export function ChatPage({
         update((t) => ({ ...t, error: errorText(e) }));
       }
     } finally {
-      if (thinkingStarted) update((t) => (t.thoughtFor === undefined ? { ...t, thoughtFor: Math.max(1, Math.round((Date.now() - thinkingStarted!) / 1000)) } : t));
+      if (thinkingStarted)
+        update((t) =>
+          t.thoughtFor === undefined
+            ? {
+                ...t,
+                thoughtFor: Math.max(
+                  1,
+                  Math.round((Date.now() - thinkingStarted!) / 1000),
+                ),
+              }
+            : t,
+        );
       abort.current = null;
       setBusy(false);
       const finished = [...history, current];
@@ -284,19 +402,24 @@ export function ChatPage({
   }
 
   const reading = drafts.some((d) => d.status === "reading");
-  const ready_drafts = drafts.filter((d) => d.status === "ready" && d.attachment);
+  const ready_drafts = drafts.filter(
+    (d) => d.status === "ready" && d.attachment,
+  );
   const hasPictures = ready_drafts.some((d) => d.kind === "image");
   const blind = hasPictures && model && !model.vision;
 
   function send(text = input) {
     text = text.trim();
-    if ((!text && !ready_drafts.length) || busy || !ready || reading || blind) return;
+    if ((!text && !ready_drafts.length) || busy || !ready || reading || blind)
+      return;
     const id = activeId ?? newId();
     if (!activeId) setActiveId(id);
     const user: Turn = {
       role: "user",
       content: text,
-      ...(ready_drafts.length ? { attachments: ready_drafts.map((d) => d.attachment!) } : {}),
+      ...(ready_drafts.length
+        ? { attachments: ready_drafts.map((d) => d.attachment!) }
+        : {}),
     };
     setInput("");
     setDrafts([]);
@@ -305,29 +428,52 @@ export function ChatPage({
   }
 
   function regenerate(index = turns.length - 1) {
-    const history = turns.slice(0, index).filter((t) => !(t.error && !t.content));
-    while (history.length && history[history.length - 1].role === "assistant") history.pop();
+    const history = turns
+      .slice(0, index)
+      .filter((t) => !(t.error && !t.content));
+    while (history.length && history[history.length - 1].role === "assistant")
+      history.pop();
     if (history.length && activeId) ask(history, activeId);
   }
 
   function resend(index: number, text: string) {
     if (!activeId || busy) return;
     const original = turns[index];
-    const history = [...turns.slice(0, index), { ...original, content: text.trim() }];
+    const history = [
+      ...turns.slice(0, index),
+      { ...original, content: text.trim() },
+    ];
     setEditing(null);
     ask(history, activeId);
   }
 
   function continueReply() {
     if (!activeId || busy) return;
-    ask([...turns, { role: "user", content: "Continue exactly where you stopped." }], activeId);
+    ask(
+      [
+        ...turns,
+        { role: "user", content: "Continue exactly where you stopped." },
+      ],
+      activeId,
+    );
   }
 
   // ----- attachments -----
   async function attach(list: FileList | File[]) {
-    const incoming = Array.from(list).slice(0, Math.max(0, MAX_ATTACHMENTS - drafts.length));
+    const incoming = Array.from(list).slice(
+      0,
+      Math.max(0, MAX_ATTACHMENTS - drafts.length),
+    );
     if (!incoming.length) return;
-    const added = incoming.map((f) => ({ id: newId(), name: f.name || "Pasted picture", kind: f.type.startsWith("image/") ? "image" : "file", status: "reading" }) as Draft);
+    const added = incoming.map(
+      (f) =>
+        ({
+          id: newId(),
+          name: f.name || "Pasted picture",
+          kind: f.type.startsWith("image/") ? "image" : "file",
+          status: "reading",
+        }) as Draft,
+    );
     setDrafts((d) => [...d, ...added]);
     await Promise.all(
       incoming.map(async (f, i) => {
@@ -373,7 +519,8 @@ export function ChatPage({
   useEffect(() => {
     if (!menu) return;
     const close = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest(".menu, [data-menu]")) setMenu(null);
+      if (!(e.target as HTMLElement).closest(".menu, [data-menu]"))
+        setMenu(null);
     };
     addEventListener("mousedown", close);
     return () => removeEventListener("mousedown", close);
@@ -382,7 +529,11 @@ export function ChatPage({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return chats;
-    return chats.filter((c) => c.title.toLowerCase().includes(q) || c.turns.some((t) => t.content.toLowerCase().includes(q)));
+    return chats.filter(
+      (c) =>
+        c.title.toLowerCase().includes(q) ||
+        c.turns.some((t) => t.content.toLowerCase().includes(q)),
+    );
   }, [chats, query]);
   const groups = useMemo(() => {
     const out: [string, Conversation[]][] = [];
@@ -418,19 +569,40 @@ export function ChatPage({
       {drafts.length > 0 && (
         <div className="drafts">
           {drafts.map((d) => (
-            <div key={d.id} className={`draft ${d.kind} ${d.status}`} title={d.error ?? d.name}>
+            <div
+              key={d.id}
+              className={`draft ${d.kind} ${d.status}`}
+              title={d.error ?? d.name}
+            >
               {d.kind === "image" && d.preview ? (
                 <img src={d.preview} alt={d.name} />
               ) : (
                 <>
-                  <span className="ext">{d.status === "reading" ? <span className="mini-spin" /> : extension(d.name)}</span>
+                  <span className="ext">
+                    {d.status === "reading" ? (
+                      <span className="mini-spin" />
+                    ) : (
+                      extension(d.name)
+                    )}
+                  </span>
                   <span className="draft-text">
                     <strong>{d.name}</strong>
-                    <small>{d.status === "reading" ? "Reading…" : (d.error ?? d.detail)}</small>
+                    <small>
+                      {d.status === "reading"
+                        ? "Reading…"
+                        : (d.error ?? d.detail)}
+                    </small>
                   </span>
                 </>
               )}
-              <button type="button" className="draft-x" aria-label={`Remove ${d.name}`} onClick={() => setDrafts((all) => all.filter((x) => x.id !== d.id))}>
+              <button
+                type="button"
+                className="draft-x"
+                aria-label={`Remove ${d.name}`}
+                onClick={() =>
+                  setDrafts((all) => all.filter((x) => x.id !== d.id))
+                }
+              >
                 <Icon name="close" size={12} />
               </button>
             </div>
@@ -452,7 +624,12 @@ export function ChatPage({
           }
         }}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !matchMedia("(pointer: coarse)").matches) {
+          if (
+            e.key === "Enter" &&
+            !e.shiftKey &&
+            !e.nativeEvent.isComposing &&
+            !matchMedia("(pointer: coarse)").matches
+          ) {
             e.preventDefault();
             send();
           }
@@ -461,33 +638,82 @@ export function ChatPage({
       {blind && (
         <div className="composer-note warn">
           {model?.name} can't see pictures.{" "}
-          {models.some((m) => m.vision) ? "Pick a model that can from the menu at the top." : admin ? "Download Gemma 3 4B or Qwen2.5 VL 3B in Models." : "Ask an admin for a model that can."}
+          {models.some((m) => m.vision)
+            ? "Pick a model that can from the menu at the top."
+            : admin
+              ? "Download Gemma 3 4B or Qwen2.5 VL 3B in Models."
+              : "Ask an admin for a model that can."}
         </div>
       )}
       <div className="composer-row">
-        <button type="button" className="round" aria-label="Attach pictures or files" title="Attach pictures, PDFs or files" disabled={!ready || drafts.length >= MAX_ATTACHMENTS} onClick={() => files.current?.click()}>
+        <button
+          type="button"
+          className="round"
+          aria-label="Attach pictures or files"
+          title="Attach pictures, PDFs or files"
+          disabled={!ready || drafts.length >= MAX_ATTACHMENTS}
+          onClick={() => files.current?.click()}
+        >
           <Icon name="plus" size={20} />
         </button>
         <button
           type="button"
           className={`chip ${(prefs.reasoning ?? defaults.reasoning) ? "on" : ""}`}
           title="Whether reasoning models think before answering"
-          onClick={() => setPrefs({ ...prefs, reasoning: prefs.reasoning === undefined ? false : prefs.reasoning === false ? true : undefined })}
+          onClick={() =>
+            setPrefs({
+              ...prefs,
+              reasoning:
+                prefs.reasoning === undefined
+                  ? false
+                  : prefs.reasoning === false
+                    ? true
+                    : undefined,
+            })
+          }
         >
           <Icon name="brain" size={16} />
-          {(prefs.reasoning ?? defaults.reasoning) === undefined ? "Think: auto" : (prefs.reasoning ?? defaults.reasoning) ? "Think: on" : "Think: off"}
+          {(prefs.reasoning ?? defaults.reasoning) === undefined
+            ? "Think: auto"
+            : (prefs.reasoning ?? defaults.reasoning)
+              ? "Think: on"
+              : "Think: off"}
         </button>
-        <button type="button" className={`chip ${tuneOpen ? "on" : ""}`} onClick={() => setTuneOpen(!tuneOpen)} title="Model settings">
+        <button
+          type="button"
+          className={`chip ${tuneOpen ? "on" : ""}`}
+          onClick={() => setTuneOpen(!tuneOpen)}
+          title="Model settings"
+        >
           <Icon name="sliders" size={16} />
-          {prefs.style && prefs.style !== "custom" ? STYLES[prefs.style].label : prefs.temperature !== undefined ? `Temp ${prefs.temperature}` : "Settings"}
+          {prefs.style && prefs.style !== "custom"
+            ? STYLES[prefs.style].label
+            : prefs.temperature !== undefined
+              ? `Temp ${prefs.temperature}`
+              : "Settings"}
         </button>
         <span className="grow" />
         {busy ? (
-          <button type="button" className="round send stop" aria-label="Stop" onClick={() => abort.current?.abort()}>
+          <button
+            type="button"
+            className="round send stop"
+            aria-label="Stop"
+            onClick={() => abort.current?.abort()}
+          >
             <Icon name="stop" size={16} />
           </button>
         ) : (
-          <button className="round send" type="submit" aria-label="Send" disabled={!ready || reading || !!blind || (!input.trim() && !ready_drafts.length)}>
+          <button
+            className="round send"
+            type="submit"
+            aria-label="Send"
+            disabled={
+              !ready ||
+              reading ||
+              !!blind ||
+              (!input.trim() && !ready_drafts.length)
+            }
+          >
             <Icon name="send" size={18} />
           </button>
         )}
@@ -516,7 +742,13 @@ export function ChatPage({
         }
       }}
       onDragLeave={(e) => {
-        if (e.currentTarget === e.target || !(e.relatedTarget && e.currentTarget.contains(e.relatedTarget as Node))) setDragging(false);
+        if (
+          e.currentTarget === e.target ||
+          !(
+            e.relatedTarget && e.currentTarget.contains(e.relatedTarget as Node)
+          )
+        )
+          setDragging(false);
       }}
       onDrop={(e) => {
         e.preventDefault();
@@ -535,9 +767,20 @@ export function ChatPage({
         <div className="nav-top">
           <label className="search">
             <Icon name="search" size={16} />
-            <input ref={search} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search chats" aria-label="Search chats" />
+            <input
+              ref={search}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search chats"
+              aria-label="Search chats"
+            />
           </label>
-          <button className="icon-btn" aria-label="New chat" title="New chat (Ctrl+Shift+O)" onClick={() => open(null)}>
+          <button
+            className="icon-btn"
+            aria-label="New chat"
+            title="New chat (Ctrl+Shift+O)"
+            onClick={() => open(null)}
+          >
             <Icon name="newChat" />
           </button>
         </div>
@@ -546,18 +789,36 @@ export function ChatPage({
           <strong>BrainWashed</strong>
         </div>
         <div className="convos">
-          {loaded && chats.length === 0 && <p className="hint">Your chats appear here. They're kept only in this browser.</p>}
-          {loaded && chats.length > 0 && filtered.length === 0 && <p className="hint">No chats match.</p>}
+          {loaded && chats.length === 0 && (
+            <p className="hint">
+              Your chats appear here. They're kept only in this browser.
+            </p>
+          )}
+          {loaded && chats.length > 0 && filtered.length === 0 && (
+            <p className="hint">No chats match.</p>
+          )}
           {groups.map(([label, list]) => (
             <section key={label}>
               <h4>{label}</h4>
               {list.map((c) => (
-                <div key={c.id} className={`convo ${c.id === activeId ? "active" : ""}`}>
-                  <button className="convo-open" onClick={() => open(c)} title={c.title}>
+                <div
+                  key={c.id}
+                  className={`convo ${c.id === activeId ? "active" : ""}`}
+                >
+                  <button
+                    className="convo-open"
+                    onClick={() => open(c)}
+                    title={c.title}
+                  >
                     {c.pinned && <Icon name="pin" size={13} />}
                     <span>{c.title}</span>
                   </button>
-                  <button className="convo-more" data-menu aria-label="Chat options" onClick={() => setMenu(menu === c.id ? null : c.id)}>
+                  <button
+                    className="convo-more"
+                    data-menu
+                    aria-label="Chat options"
+                    onClick={() => setMenu(menu === c.id ? null : c.id)}
+                  >
                     <Icon name="more" />
                   </button>
                   {menu === c.id && (
@@ -565,7 +826,8 @@ export function ChatPage({
                       <button
                         onClick={() => {
                           const name = prompt("Rename chat", c.title);
-                          if (name?.trim()) updateChat(c.id, { title: name.trim() });
+                          if (name?.trim())
+                            updateChat(c.id, { title: name.trim() });
                           setMenu(null);
                         }}
                       >
@@ -577,11 +839,15 @@ export function ChatPage({
                           setMenu(null);
                         }}
                       >
-                        <Icon name="pin" size={16} /> {c.pinned ? "Unpin" : "Pin"}
+                        <Icon name="pin" size={16} />{" "}
+                        {c.pinned ? "Unpin" : "Pin"}
                       </button>
                       <button
                         onClick={() => {
-                          download(`${c.title.replace(/[^\w -]+/g, "").trim() || "chat"}.md`, toMarkdown(c));
+                          download(
+                            `${c.title.replace(/[^\w -]+/g, "").trim() || "chat"}.md`,
+                            toMarkdown(c),
+                          );
                           setMenu(null);
                         }}
                       >
@@ -610,9 +876,19 @@ export function ChatPage({
             </span>
             <span className="host-text">
               <strong>{paired.hostName}</strong>
-              <small className={state?.state === "ready" ? "ok" : ""}>{stateText(state, (id) => installed.value?.find((m) => m.id === id)?.name ?? id)}</small>
+              <small className={state?.state === "ready" ? "ok" : ""}>
+                {stateText(
+                  state,
+                  (id) => installed.value?.find((m) => m.id === id)?.name ?? id,
+                )}
+              </small>
             </span>
-            <button className="icon-btn" data-menu aria-label="Preferences" onClick={() => setMenu(menu === "prefs" ? null : "prefs")}>
+            <button
+              className="icon-btn"
+              data-menu
+              aria-label="Preferences"
+              onClick={() => setMenu(menu === "prefs" ? null : "prefs")}
+            >
               <Icon name="settings" />
             </button>
           </div>
@@ -625,13 +901,22 @@ export function ChatPage({
             <div className="menu up prefs-menu">
               <label>
                 Theme
-                <select value={look.theme} onChange={(e) => setLook({ ...look, theme: e.target.value as Look["theme"] })}>
+                <select
+                  value={look.theme}
+                  onChange={(e) =>
+                    setLook({ ...look, theme: e.target.value as Look["theme"] })
+                  }
+                >
                   <option value="auto">Match device</option>
                   <option value="light">Light</option>
                   <option value="dark">Dark</option>
                 </select>
               </label>
-              <div className="accents" role="radiogroup" aria-label="Accent color">
+              <div
+                className="accents"
+                role="radiogroup"
+                aria-label="Accent color"
+              >
                 {ACCENTS.map((c) => (
                   <button
                     key={c}
@@ -644,11 +929,18 @@ export function ChatPage({
                   />
                 ))}
               </div>
-              <span className="role-line">{admin ? "This browser is an admin." : "This browser can chat."}</span>
+              <span className="role-line">
+                {admin ? "This browser is an admin." : "This browser can chat."}
+              </span>
               <button
                 className="danger"
                 onClick={() => {
-                  if (confirm(`Disconnect this browser from ${paired.hostName}? Chats stay in this browser until you clear them.`)) onForget();
+                  if (
+                    confirm(
+                      `Disconnect this browser from ${paired.hostName}? Chats stay in this browser until you clear them.`,
+                    )
+                  )
+                    onForget();
                 }}
               >
                 <Icon name="logout" size={16} /> Disconnect this browser
@@ -662,35 +954,69 @@ export function ChatPage({
       {/* ----- conversation ----- */}
       <main className="chat-stage">
         <header className="stage-top">
-          <button className="icon-btn glass only-narrow" aria-label="Chats" onClick={() => setNavOpen(true)}>
+          <button
+            className="icon-btn glass only-narrow"
+            aria-label="Chats"
+            onClick={() => setNavOpen(true)}
+          >
             <Icon name="menu" />
           </button>
           <div className="model-pill-wrap">
-            <button className="model-pill glass" data-menu onClick={() => setMenu(menu === "model" ? null : "model")} aria-haspopup="menu">
-              <span className={`dot ${ready ? (cloud ? "cloud" : "on") : loading ? "wait" : "off"}`} />
+            <button
+              className="model-pill glass"
+              data-menu
+              onClick={() => setMenu(menu === "model" ? null : "model")}
+              aria-haspopup="menu"
+            >
+              <span
+                className={`dot ${ready ? (cloud ? "cloud" : "on") : loading ? "wait" : "off"}`}
+              />
               <span className="pill-text">
-                <strong>{model?.name ?? (loading ? "Starting…" : "No model")}</strong>
+                <strong>
+                  {model?.name ?? (loading ? "Starting…" : "No model")}
+                </strong>
                 <small>{model?.cloud ? model.provider : paired.hostName}</small>
               </span>
               <Icon name="chevronDown" size={16} />
             </button>
             {menu === "model" && (
               <div className="menu model-menu">
-                {models.length === 0 && <p className="menu-note">{loading ? stateText(state) : "Nothing is running yet."}</p>}
+                {models.length === 0 && (
+                  <p className="menu-note">
+                    {loading ? stateText(state) : "Nothing is running yet."}
+                  </p>
+                )}
                 {models.some((m) => !m.cloud) && <h5>On {paired.hostName}</h5>}
                 {models
                   .filter((m) => !m.cloud)
                   .map((m) => (
-                    <ModelRow key={m.id} m={m} on={m.id === model?.id} onPick={() => (pickModel(m.id), setMenu(null))} />
+                    <ModelRow
+                      key={m.id}
+                      m={m}
+                      on={m.id === model?.id}
+                      onPick={() => (pickModel(m.id), setMenu(null))}
+                    />
                   ))}
                 {admin &&
                   (installed.value ?? [])
-                    .filter((m) => !(state?.state === "ready" && state.model === m.id))
+                    .filter(
+                      (m) =>
+                        !(state?.state === "ready" && state.model === m.id),
+                    )
                     .map((m) => (
-                      <button key={m.id} className="model-row" disabled={loading} onClick={() => (loadLocal(m.id), setMenu(null))}>
+                      <button
+                        key={m.id}
+                        className="model-row"
+                        disabled={loading}
+                        onClick={() => (loadLocal(m.id), setMenu(null))}
+                      >
                         <span className="model-row-text">
                           <strong>{m.name}</strong>
-                          <small>{state?.state === "loading" && state.model === m.id ? "Starting…" : "Installed. Click to start it"}</small>
+                          <small>
+                            {state?.state === "loading" && state.model === m.id
+                              ? "Starting…"
+                              : "Installed. Click to start it"}
+                          </small>
                         </span>
                         {m.mmproj && <span className="tag">Vision</span>}
                       </button>
@@ -699,7 +1025,12 @@ export function ChatPage({
                 {models
                   .filter((m) => m.cloud)
                   .map((m) => (
-                    <ModelRow key={m.id} m={m} on={m.id === model?.id} onPick={() => (pickModel(m.id), setMenu(null))} />
+                    <ModelRow
+                      key={m.id}
+                      m={m}
+                      on={m.id === model?.id}
+                      onPick={() => (pickModel(m.id), setMenu(null))}
+                    />
                   ))}
                 {admin && (
                   <div className="menu-actions">
@@ -715,10 +1046,20 @@ export function ChatPage({
             )}
           </div>
           <div className="top-right">
-            <button className={`icon-btn glass ${tuneOpen ? "on" : ""}`} aria-label="Model settings" title="Model settings" onClick={() => setTuneOpen(!tuneOpen)}>
+            <button
+              className={`icon-btn glass ${tuneOpen ? "on" : ""}`}
+              aria-label="Model settings"
+              title="Model settings"
+              onClick={() => setTuneOpen(!tuneOpen)}
+            >
               <Icon name="sliders" />
             </button>
-            <button className="icon-btn glass" aria-label="New chat" title="New chat" onClick={() => open(null)}>
+            <button
+              className="icon-btn glass"
+              aria-label="New chat"
+              title="New chat"
+              onClick={() => open(null)}
+            >
               <Icon name="newChat" />
             </button>
           </div>
@@ -735,7 +1076,13 @@ export function ChatPage({
           {empty ? (
             <div className="welcome-hero">
               <span className="orb big" />
-              <h1>{ready ? greeting() : loading ? "Starting your model…" : "Almost there"}</h1>
+              <h1>
+                {ready
+                  ? greeting()
+                  : loading
+                    ? "Starting your model…"
+                    : "Almost there"}
+              </h1>
               <p className="lede">
                 {ready
                   ? cloud
@@ -749,7 +1096,10 @@ export function ChatPage({
               </p>
               {!ready && !loading && admin && (
                 <div className="hero-actions">
-                  <button className="primary" onClick={() => onManage("models")}>
+                  <button
+                    className="primary"
+                    onClick={() => onManage("models")}
+                  >
                     <Icon name="download" size={16} /> Download a model
                   </button>
                   <button onClick={() => onManage("providers")}>
@@ -762,7 +1112,11 @@ export function ChatPage({
                   {composer}
                   <div className="cards">
                     {SUGGESTIONS.map((s) => (
-                      <button key={s.title} className="card-suggest glass" onClick={() => send(s.prompt)}>
+                      <button
+                        key={s.title}
+                        className="card-suggest glass"
+                        onClick={() => send(s.prompt)}
+                      >
                         <Icon name={s.icon} />
                         <strong>{s.title}</strong>
                         <span>{s.prompt}</span>
@@ -776,7 +1130,8 @@ export function ChatPage({
             <div className="thread">
               {active?.instructions && (
                 <div className="instructions-note">
-                  <Icon name="sparkle" size={14} /> Custom instructions are on for this chat
+                  <Icon name="sparkle" size={14} /> Custom instructions are on
+                  for this chat
                 </div>
               )}
               {turns.map((t, i) =>
@@ -798,10 +1153,23 @@ export function ChatPage({
                     )}
                     {editing?.index === i ? (
                       <div className="edit-box glass">
-                        <textarea autoFocus value={editing.text} onChange={(e) => setEditing({ index: i, text: e.target.value })} rows={3} />
+                        <textarea
+                          autoFocus
+                          value={editing.text}
+                          onChange={(e) =>
+                            setEditing({ index: i, text: e.target.value })
+                          }
+                          rows={3}
+                        />
                         <div className="edit-actions">
-                          <button onClick={() => setEditing(null)}>Cancel</button>
-                          <button className="primary" disabled={!editing.text.trim() || !ready} onClick={() => resend(i, editing.text)}>
+                          <button onClick={() => setEditing(null)}>
+                            Cancel
+                          </button>
+                          <button
+                            className="primary"
+                            disabled={!editing.text.trim() || !ready}
+                            onClick={() => resend(i, editing.text)}
+                          >
                             Send
                           </button>
                         </div>
@@ -812,7 +1180,13 @@ export function ChatPage({
                     {!busy && editing?.index !== i && (
                       <div className="msg-actions">
                         <CopyIcon text={t.content} />
-                        <button aria-label="Edit" title="Edit and send again" onClick={() => setEditing({ index: i, text: t.content })}>
+                        <button
+                          aria-label="Edit"
+                          title="Edit and send again"
+                          onClick={() =>
+                            setEditing({ index: i, text: t.content })
+                          }
+                        >
                           <Icon name="edit" size={16} />
                         </button>
                       </div>
@@ -832,7 +1206,10 @@ export function ChatPage({
                         </div>
                       )}
                       {t.reasoning && (
-                        <details className="thought" open={busy && i === turns.length - 1 && !t.content}>
+                        <details
+                          className="thought"
+                          open={busy && i === turns.length - 1 && !t.content}
+                        >
                           <summary>
                             {busy && i === turns.length - 1 && !t.content ? (
                               <span className="shimmer">Thinking…</span>
@@ -853,25 +1230,54 @@ export function ChatPage({
                           <i />
                         </span>
                       ) : null}
-                      {t.toolCalls?.map((c, k) => (
-                        <details key={k} className="tool-call">
-                          <summary>
-                            <Icon name="wrench" size={14} />
-                            {c.name ? (
-                              <span>
-                                Tried to use <code>{c.name}</code>
-                              </span>
-                            ) : (
-                              <span>Tried to use a tool</span>
-                            )}
-                            <Icon name="chevronDown" size={14} />
-                          </summary>
-                          <div className="tool-call-body">
-                            <p>This model is trained to use tools, but BrainWashed doesn't give it any, so nothing ran.</p>
-                            <pre>{c.raw ?? JSON.stringify(c.arguments, null, 2)}</pre>
-                          </div>
-                        </details>
-                      ))}
+                      {t.toolCalls?.map((c, k) => {
+                        const ask = askOf(c);
+                        if (ask)
+                          return (
+                            <div key={k} className="ask">
+                              <Markdown text={ask.question} />
+                              {ask.options.length > 0 && (
+                                <div className="ask-options">
+                                  {ask.options.map((o) => (
+                                    <button
+                                      key={o}
+                                      disabled={
+                                        i !== turns.length - 1 || !ready || busy
+                                      }
+                                      onClick={() => send(o)}
+                                    >
+                                      {o}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        return (
+                          <details key={k} className="tool-call">
+                            <summary>
+                              <Icon name="wrench" size={14} />
+                              {c.name ? (
+                                <span>
+                                  Tried to use <code>{c.name}</code>
+                                </span>
+                              ) : (
+                                <span>Tried to use a tool</span>
+                              )}
+                              <Icon name="chevronDown" size={14} />
+                            </summary>
+                            <div className="tool-call-body">
+                              <p>
+                                This model is trained to use tools, but
+                                BrainWashed doesn't give it any, so nothing ran.
+                              </p>
+                              <pre>
+                                {c.raw ?? JSON.stringify(c.arguments, null, 2)}
+                              </pre>
+                            </div>
+                          </details>
+                        );
+                      })}
                       {t.error && (
                         <div className="msg-error">
                           {t.error}
@@ -882,23 +1288,33 @@ export function ChatPage({
                           )}
                         </div>
                       )}
-                      {t.stats?.truncated && !busy && i === turns.length - 1 && (
-                        <div className="msg-note">
-                          The reply hit the length limit.
-                          <button onClick={continueReply}>Continue</button>
-                        </div>
-                      )}
-                      {!(busy && i === turns.length - 1) && t.content && (
+                      {t.stats?.truncated &&
+                        !busy &&
+                        i === turns.length - 1 && (
+                          <div className="msg-note">
+                            The reply hit the length limit.
+                            <button onClick={continueReply}>Continue</button>
+                          </div>
+                        )}
+                      {!(busy && i === turns.length - 1) && fullText(t) && (
                         <div className="msg-actions">
-                          <CopyIcon text={t.content} />
+                          <CopyIcon text={fullText(t)} />
                           {i === turns.length - 1 && ready && (
-                            <button aria-label="Regenerate" title="Regenerate" onClick={() => regenerate()}>
+                            <button
+                              aria-label="Regenerate"
+                              title="Regenerate"
+                              onClick={() => regenerate()}
+                            >
                               <Icon name="refresh" size={16} />
                             </button>
                           )}
                           {t.stats && t.stats.tokens > 0 && (
-                            <span className="stats" title={`${t.stats.promptTokens} tokens in, ${t.stats.tokens} out`}>
-                              {t.stats.tokens} tokens · {t.stats.tokensPerSecond.toFixed(1)}/s
+                            <span
+                              className="stats"
+                              title={`${t.stats.promptTokens} tokens in, ${t.stats.tokens} out`}
+                            >
+                              {t.stats.tokens} tokens ·{" "}
+                              {t.stats.tokensPerSecond.toFixed(1)}/s
                             </span>
                           )}
                         </div>
@@ -910,7 +1326,11 @@ export function ChatPage({
               {last?.role === "user" && !busy && (
                 <div className="msg-note">
                   No reply yet.
-                  {ready && <button onClick={() => regenerate(turns.length)}>Get a reply</button>}
+                  {ready && (
+                    <button onClick={() => regenerate(turns.length)}>
+                      Get a reply
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -923,7 +1343,12 @@ export function ChatPage({
               <button
                 className="jump glass"
                 aria-label="Scroll to the latest message"
-                onClick={() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" })}
+                onClick={() =>
+                  scroller.current?.scrollTo({
+                    top: scroller.current.scrollHeight,
+                    behavior: "smooth",
+                  })
+                }
               >
                 <Icon name="arrowDown" size={16} />
               </button>
@@ -933,7 +1358,9 @@ export function ChatPage({
         )}
         <p className="fine-print">
           <Icon name={cloud ? "globe" : "lock"} size={12} />
-          {cloud ? `Messages in this chat go to ${model!.provider}. Answers can be wrong.` : `Runs privately on ${paired.hostName}. Answers can be wrong.`}
+          {cloud
+            ? `Messages in this chat go to ${model!.provider}. Answers can be wrong.`
+            : `Runs privately on ${paired.hostName}. Answers can be wrong.`}
         </p>
         {dragging && (
           <div className="drop-zone">
@@ -946,7 +1373,11 @@ export function ChatPage({
       </main>
 
       {/* ----- model settings ----- */}
-      <aside className="tune glass" aria-label="Model settings" aria-hidden={!tuneOpen}>
+      <aside
+        className="tune glass"
+        aria-label="Model settings"
+        aria-hidden={!tuneOpen}
+      >
         <TunePanel
           prefs={prefs}
           defaults={defaults}
@@ -955,7 +1386,8 @@ export function ChatPage({
           instructions={instructions}
           setInstructions={(v) => {
             setInstructions(v);
-            if (activeId && chats.some((c) => c.id === activeId)) updateChat(activeId, { instructions: v || undefined });
+            if (activeId && chats.some((c) => c.id === activeId))
+              updateChat(activeId, { instructions: v || undefined });
           }}
           onClose={() => setTuneOpen(false)}
         />
@@ -964,12 +1396,29 @@ export function ChatPage({
   );
 }
 
-function ModelRow({ m, on, onPick }: { m: ChatModel; on: boolean; onPick: () => void }) {
+function ModelRow({
+  m,
+  on,
+  onPick,
+}: {
+  m: ChatModel;
+  on: boolean;
+  onPick: () => void;
+}) {
   return (
-    <button className={`model-row ${on ? "on" : ""}`} onClick={onPick} role="menuitemradio" aria-checked={on}>
+    <button
+      className={`model-row ${on ? "on" : ""}`}
+      onClick={onPick}
+      role="menuitemradio"
+      aria-checked={on}
+    >
       <span className="model-row-text">
         <strong>{m.name}</strong>
-        <small>{m.cloud ? `${m.provider} · leaves this computer` : "Running now · private"}</small>
+        <small>
+          {m.cloud
+            ? `${m.provider} · leaves this computer`
+            : "Running now · private"}
+        </small>
       </span>
       {m.vision && !m.cloud && <span className="tag">Vision</span>}
       {on && <Icon name="check" size={16} />}
@@ -997,7 +1446,15 @@ function CopyIcon({ text }: { text: string }) {
 
 const LENGTHS = [undefined, 256, 512, 1024, 2048, 4096, 8192] as const;
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
     <div className="field">
       <div className="field-head">
@@ -1040,7 +1497,11 @@ function NumberAuto({
         value={value ?? ""}
         onChange={(e) => {
           const v = e.target.value === "" ? undefined : Number(e.target.value);
-          onChange(v === undefined || Number.isNaN(v) ? undefined : Math.min(max, Math.max(min, v)));
+          onChange(
+            v === undefined || Number.isNaN(v)
+              ? undefined
+              : Math.min(max, Math.max(min, v)),
+          );
         }}
       />
     </label>
@@ -1065,7 +1526,10 @@ function TunePanel({
   onClose: () => void;
 }) {
   const set = (patch: Partial<ChatPrefs>) => setPrefs({ ...prefs, ...patch });
-  const lengthIndex = Math.max(0, LENGTHS.indexOf(prefs.maxTokens as (typeof LENGTHS)[number]));
+  const lengthIndex = Math.max(
+    0,
+    LENGTHS.indexOf(prefs.maxTokens as (typeof LENGTHS)[number]),
+  );
   return (
     <div className="tune-inner">
       <div className="tune-head">
@@ -1075,27 +1539,59 @@ function TunePanel({
         </button>
       </div>
 
-      <Field label="Thinking" hint="Reasoning models like Qwen3 can think before they answer. Off is faster.">
+      <Field
+        label="Thinking"
+        hint="Reasoning models like Qwen3 can think before they answer. Off is faster."
+      >
         <div className="segmented">
-          {([
-            [undefined, defaults.reasoning === undefined ? "Default" : `Default (${defaults.reasoning ? "on" : "off"})`],
-            [true, "On"],
-            [false, "Off"],
-          ] as const).map(([v, label]) => (
-            <button key={label} className={prefs.reasoning === v ? "on" : ""} onClick={() => set({ reasoning: v })}>
+          {(
+            [
+              [
+                undefined,
+                defaults.reasoning === undefined
+                  ? "Default"
+                  : `Default (${defaults.reasoning ? "on" : "off"})`,
+              ],
+              [true, "On"],
+              [false, "Off"],
+            ] as const
+          ).map(([v, label]) => (
+            <button
+              key={label}
+              className={prefs.reasoning === v ? "on" : ""}
+              onClick={() => set({ reasoning: v })}
+            >
               {label}
             </button>
           ))}
         </div>
       </Field>
 
-      <Field label="Style" hint={prefs.style && prefs.style !== "custom" ? STYLES[prefs.style].hint : "How adventurous the wording is."}>
+      <Field
+        label="Style"
+        hint={
+          prefs.style && prefs.style !== "custom"
+            ? STYLES[prefs.style].hint
+            : "How adventurous the wording is."
+        }
+      >
         <div className="segmented">
-          <button className={!prefs.style && prefs.temperature === undefined ? "on" : ""} onClick={() => set({ style: undefined, temperature: undefined })}>
+          <button
+            className={
+              !prefs.style && prefs.temperature === undefined ? "on" : ""
+            }
+            onClick={() => set({ style: undefined, temperature: undefined })}
+          >
             Default
           </button>
           {(Object.keys(STYLES) as (keyof typeof STYLES)[]).map((k) => (
-            <button key={k} className={prefs.style === k ? "on" : ""} onClick={() => set({ style: k, temperature: STYLES[k].temperature })}>
+            <button
+              key={k}
+              className={prefs.style === k ? "on" : ""}
+              onClick={() =>
+                set({ style: k, temperature: STYLES[k].temperature })
+              }
+            >
               {STYLES[k].label}
             </button>
           ))}
@@ -1108,10 +1604,17 @@ function TunePanel({
             max={2}
             step={0.05}
             value={prefs.temperature ?? defaults.temperature ?? 0.8}
-            onChange={(e) => set({ temperature: Number(e.target.value), style: "custom" })}
+            onChange={(e) =>
+              set({ temperature: Number(e.target.value), style: "custom" })
+            }
             aria-label="Temperature"
           />
-          <output>{prefs.temperature?.toFixed(2) ?? (defaults.temperature !== undefined ? `${defaults.temperature.toFixed(2)} (default)` : "Auto")}</output>
+          <output>
+            {prefs.temperature?.toFixed(2) ??
+              (defaults.temperature !== undefined
+                ? `${defaults.temperature.toFixed(2)} (default)`
+                : "Auto")}
+          </output>
         </div>
       </Field>
 
@@ -1123,10 +1626,18 @@ function TunePanel({
             max={LENGTHS.length - 1}
             step={1}
             value={lengthIndex}
-            onChange={(e) => set({ maxTokens: LENGTHS[Number(e.target.value)] })}
+            onChange={(e) =>
+              set({ maxTokens: LENGTHS[Number(e.target.value)] })
+            }
             aria-label="Reply length"
           />
-          <output>{prefs.maxTokens ? `${prefs.maxTokens} tokens` : defaults.maxTokens ? `${defaults.maxTokens} tokens (default)` : "No limit"}</output>
+          <output>
+            {prefs.maxTokens
+              ? `${prefs.maxTokens} tokens`
+              : defaults.maxTokens
+                ? `${defaults.maxTokens} tokens (default)`
+                : "No limit"}
+          </output>
         </div>
       </Field>
 
@@ -1135,17 +1646,76 @@ function TunePanel({
           Advanced sampling <Icon name="chevronDown" size={14} />
         </summary>
         <div className="num-grid">
-          <NumberAuto label="Top P" value={prefs.topP} fallback={defaults.topP} onChange={(v) => set({ topP: v })} step={0.05} min={0} max={1} />
-          <NumberAuto label="Presence penalty" value={prefs.presencePenalty} fallback={defaults.presencePenalty} onChange={(v) => set({ presencePenalty: v })} step={0.1} min={-2} max={2} />
-          <NumberAuto label="Top K" value={prefs.topK} fallback={defaults.topK} onChange={(v) => set({ topK: v === undefined ? undefined : Math.round(v) })} step={1} min={0} max={1000} />
-          <NumberAuto label="Min P" value={prefs.minP} fallback={defaults.minP} onChange={(v) => set({ minP: v })} step={0.01} min={0} max={1} />
-          <NumberAuto label="Repeat penalty" value={prefs.repeatPenalty} fallback={defaults.repeatPenalty} onChange={(v) => set({ repeatPenalty: v })} step={0.05} min={0.5} max={2} />
-          <NumberAuto label="Seed" value={prefs.seed} fallback={defaults.seed} onChange={(v) => set({ seed: v === undefined ? undefined : Math.round(v) })} step={1} min={-1} max={2 ** 31} />
+          <NumberAuto
+            label="Top P"
+            value={prefs.topP}
+            fallback={defaults.topP}
+            onChange={(v) => set({ topP: v })}
+            step={0.05}
+            min={0}
+            max={1}
+          />
+          <NumberAuto
+            label="Presence penalty"
+            value={prefs.presencePenalty}
+            fallback={defaults.presencePenalty}
+            onChange={(v) => set({ presencePenalty: v })}
+            step={0.1}
+            min={-2}
+            max={2}
+          />
+          <NumberAuto
+            label="Top K"
+            value={prefs.topK}
+            fallback={defaults.topK}
+            onChange={(v) =>
+              set({ topK: v === undefined ? undefined : Math.round(v) })
+            }
+            step={1}
+            min={0}
+            max={1000}
+          />
+          <NumberAuto
+            label="Min P"
+            value={prefs.minP}
+            fallback={defaults.minP}
+            onChange={(v) => set({ minP: v })}
+            step={0.01}
+            min={0}
+            max={1}
+          />
+          <NumberAuto
+            label="Repeat penalty"
+            value={prefs.repeatPenalty}
+            fallback={defaults.repeatPenalty}
+            onChange={(v) => set({ repeatPenalty: v })}
+            step={0.05}
+            min={0.5}
+            max={2}
+          />
+          <NumberAuto
+            label="Seed"
+            value={prefs.seed}
+            fallback={defaults.seed}
+            onChange={(v) =>
+              set({ seed: v === undefined ? undefined : Math.round(v) })
+            }
+            step={1}
+            min={-1}
+            max={2 ** 31}
+          />
         </div>
-        {cloud && <p className="tune-note">Cloud models ignore Top K, Min P and Repeat penalty.</p>}
+        {cloud && (
+          <p className="tune-note">
+            Cloud models ignore Top K, Min P and Repeat penalty.
+          </p>
+        )}
       </details>
 
-      <Field label="Instructions for this chat" hint="Added to the system prompt, for this conversation only.">
+      <Field
+        label="Instructions for this chat"
+        hint="Added to the system prompt, for this conversation only."
+      >
         <textarea
           className="instructions"
           rows={4}
@@ -1157,7 +1727,9 @@ function TunePanel({
 
       <div className="tune-foot">
         <button onClick={() => setPrefs({})}>Reset to defaults</button>
-        <small>Saved in this browser. Admins set the defaults in Settings.</small>
+        <small>
+          Saved in this browser. Admins set the defaults in Settings.
+        </small>
       </div>
     </div>
   );

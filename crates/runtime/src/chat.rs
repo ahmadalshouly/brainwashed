@@ -1,6 +1,6 @@
 //! Streaming chat completions against llama-server's OpenAI-compatible API.
 
-use crate::toolcalls::{Piece, ToolCall, ToolCallFilter};
+use crate::toolcalls::{ask_user_tool, Piece, ToolCall, ToolCallFilter};
 use crate::{Error, Result};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -296,6 +296,9 @@ pub struct Endpoint {
     /// The provider's model name. llama-server serves one model and ignores it.
     pub model: Option<String>,
     pub llama: bool,
+    /// Offer the model the `ask_user` tool, so it can ask the person to
+    /// pick an option. Only for models whose chat template knows tools.
+    pub ask_user: bool,
 }
 
 impl Endpoint {
@@ -305,6 +308,7 @@ impl Endpoint {
             api_key: None,
             model: None,
             llama: true,
+            ask_user: false,
         }
     }
 
@@ -414,6 +418,9 @@ pub async fn stream_chat(
     if let Some(model) = &endpoint.model {
         body.insert("model".into(), model.clone().into());
     }
+    if endpoint.ask_user {
+        body.insert("tools".into(), serde_json::json!([ask_user_tool()]));
+    }
     if !endpoint.llama {
         // Token counts for the stats, since providers send no timings.
         body.insert(
@@ -443,13 +450,12 @@ pub async fn stream_chat(
         )));
     }
 
-    let mut answer = String::new();
     let mut stats = ReplyStats::default();
     let mut first_token: Option<std::time::Instant> = None;
     let mut parser = SseParser::default();
     let mut filter = ToolCallFilter::default();
     let mut native: Vec<(String, String)> = Vec::new();
-    let mut calls = 0;
+    let mut out = Emitted::default();
     let mut stream = res.bytes_stream();
     'read: while let Some(bytes) = stream.next().await {
         for data in parser.push(&bytes?) {
@@ -485,7 +491,7 @@ pub async fn stream_chat(
                 if let Some(text) = delta.content.filter(|t| !t.is_empty()) {
                     first_token.get_or_insert_with(std::time::Instant::now);
                     for piece in filter.push(&text) {
-                        emit(piece, &mut answer, &mut calls, &mut on_delta);
+                        emit(piece, &mut out, &mut on_delta);
                     }
                 }
                 for call in delta.tool_calls {
@@ -501,7 +507,7 @@ pub async fn stream_chat(
         }
     }
     for piece in filter.finish() {
-        emit(piece, &mut answer, &mut calls, &mut on_delta);
+        emit(piece, &mut out, &mut on_delta);
     }
     for (name, args) in native {
         let call = ToolCall {
@@ -510,30 +516,44 @@ pub async fn stream_chat(
             arguments: serde_json::from_str(&args).unwrap_or(serde_json::Value::String(args)),
             raw: None,
         };
-        emit(Piece::Call(call), &mut answer, &mut calls, &mut on_delta);
+        emit(Piece::Call(call), &mut out, &mut on_delta);
     }
     on_delta(Delta::Stats(stats));
-    Ok(answer)
+    Ok(out.answer)
 }
 
-/// Passes on a piece of the answer. A call that only asks the person a
-/// question becomes part of the answer, on its own paragraph.
-fn emit(piece: Piece, answer: &mut String, calls: &mut usize, on_delta: &mut impl FnMut(Delta)) {
-    let text = match piece {
-        Piece::Text(text) => text,
-        Piece::Call(mut call) => match call.as_question() {
-            Some(q) if answer.trim().is_empty() => q,
-            Some(q) if answer.ends_with("\n\n") => q,
-            Some(q) => format!("\n\n{q}"),
-            None => {
-                call.id = format!("call_{calls}");
-                *calls += 1;
-                return on_delta(Delta::ToolCall(call));
-            }
-        },
+/// What has been passed on so far.
+#[derive(Default)]
+struct Emitted {
+    answer: String,
+    calls: usize,
+    /// The model asked the person something; the reply ends there.
+    asked: bool,
+}
+
+/// Passes on a piece of the answer. A question for the person (`ask_user`)
+/// is passed on as a tool call with its options and ends the reply: the
+/// model was told to stop there, so anything after it is dropped. The
+/// returned answer is only the text; clients keep the question themselves.
+fn emit(piece: Piece, out: &mut Emitted, on_delta: &mut impl FnMut(Delta)) {
+    if out.asked {
+        return;
+    }
+    let mut call = match piece {
+        Piece::Text(text) => {
+            out.answer.push_str(&text);
+            return on_delta(Delta::Content(text));
+        }
+        Piece::Call(call) => call,
     };
-    answer.push_str(&text);
-    on_delta(Delta::Content(text));
+    call.id = format!("call_{}", out.calls);
+    out.calls += 1;
+    if let Some(ask) = call.ask_user() {
+        out.asked = true;
+        call.name = "ask_user".into();
+        call.arguments = serde_json::json!({ "question": ask.question, "options": ask.options });
+    }
+    on_delta(Delta::ToolCall(call));
 }
 
 /// Incremental parser for `text/event-stream`, yielding each event's data.

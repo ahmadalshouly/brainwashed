@@ -335,6 +335,7 @@ async fn talks_to_cloud_providers() {
         api_key: Some("sk-good".into()),
         model: Some("gpt-a".into()),
         llama: false,
+        ask_user: false,
     };
 
     assert_eq!(
@@ -395,8 +396,7 @@ async fn talks_to_cloud_providers() {
 async fn takes_tool_calls_out_of_the_answer() {
     let sse = concat!(
         "data: {\"choices\":[{\"delta\":{\"content\":\"Here you go.<|tool_\"}}]}\n\n",
-        "data: {\"choices\":[{\"delta\":{\"content\":\"call_start|>[ask_user(\\\"Which page?\\\")]<|tool_call_end|>\"}}]}\n\n",
-        "data: {\"choices\":[{\"delta\":{\"content\":\"<|tool_call_start|>[search(q='x')]<|tool_call_end|>\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"call_start|>[search(q='x')]<|tool_call_end|>\"}}]}\n\n",
         "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"calc\",\"arguments\":\"{\\\"e\\\":\"}}]}}]}\n\n",
         "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"1+1\\\"}\"}}]}}]}\n\n",
         "data: [DONE]\n\n",
@@ -422,7 +422,7 @@ async fn takes_tool_calls_out_of_the_answer() {
     )
     .await
     .unwrap();
-    assert_eq!(answer, "Here you go.\n\nWhich page?");
+    assert_eq!(answer, "Here you go.");
     let calls: Vec<_> = deltas
         .iter()
         .filter_map(|d| match d {
@@ -436,5 +436,64 @@ async fn takes_tool_calls_out_of_the_answer() {
             ("search".to_string(), serde_json::json!({"q": "x"})),
             ("calc".to_string(), serde_json::json!({"e": "1+1"})),
         ]
+    );
+}
+
+#[tokio::test]
+async fn asks_the_user_with_options() {
+    // A question the model made up in LFM markup ends the reply: the later
+    // native call is dropped.
+    let sse = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Sure.<|tool_call_start|>[ask(\\\"Which page?\\\", [\\\"Home\\\", \\\"About\\\"])]<|tool_call_end|>\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"calc\",\"arguments\":\"{}\"}}]}}]}\n\n",
+        "data: [DONE]\n\n",
+    );
+    let sent = std::sync::Arc::new(std::sync::Mutex::new(serde_json::Value::Null));
+    let seen = sent.clone();
+    let base = serve(Router::new().route(
+        "/v1/chat/completions",
+        post(
+            move |axum::Json(body): axum::Json<serde_json::Value>| async move {
+                *seen.lock().unwrap() = body;
+                Response::builder()
+                    .header("content-type", "text/event-stream")
+                    .body(Body::from(sse))
+                    .unwrap()
+            },
+        ),
+    ))
+    .await;
+    let mut endpoint = Endpoint::llama(&base);
+    endpoint.ask_user = true;
+    let mut deltas = Vec::new();
+    let answer = stream_chat(
+        &client(),
+        &endpoint,
+        &[ChatMessage::new(Role::User, "hi")],
+        &SamplingOptions::default(),
+        false,
+        |d| deltas.push(d),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sent.lock().unwrap()["tools"][0]["function"]["name"],
+        "ask_user"
+    );
+    assert_eq!(answer, "Sure.");
+    let calls: Vec<_> = deltas
+        .iter()
+        .filter_map(|d| match d {
+            Delta::ToolCall(c) => Some((c.id.clone(), c.name.clone(), c.arguments.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        vec![(
+            "call_0".to_string(),
+            "ask_user".to_string(),
+            serde_json::json!({"question": "Which page?", "options": ["Home", "About"]})
+        )]
     );
 }

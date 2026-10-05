@@ -36,6 +36,7 @@ pub struct LlamaServer {
     model: PathBuf,
     log: Arc<Mutex<VecDeque<String>>>,
     context_size: Option<u32>,
+    tools: bool,
 }
 
 const LOG_LINES: usize = 200;
@@ -101,9 +102,10 @@ impl LlamaServer {
             model: opts.model.clone(),
             log,
             context_size: None,
+            tools: false,
         };
         server.wait_ready(client, timeout).await?;
-        server.context_size = server.fetch_context_size(client).await;
+        server.read_props(client).await;
         Ok(server)
     }
 
@@ -141,20 +143,33 @@ impl LlamaServer {
         }
     }
 
-    /// llama.cpp caps the context at what the model was trained on, so the
-    /// real size can be smaller than requested.
-    async fn fetch_context_size(&self, client: &reqwest::Client) -> Option<u32> {
-        let props: serde_json::Value = client
-            .get(format!("{}/props", self.base_url()))
-            .send()
-            .await
-            .ok()?
-            .json()
-            .await
-            .ok()?;
-        props["default_generation_settings"]["n_ctx"]
+    /// Reads what the loaded model can do. llama.cpp caps the context at
+    /// what the model was trained on, so the real size can be smaller than
+    /// requested.
+    async fn read_props(&mut self, client: &reqwest::Client) {
+        let props: Option<serde_json::Value> = async {
+            client
+                .get(format!("{}/props", self.base_url()))
+                .send()
+                .await
+                .ok()?
+                .json()
+                .await
+                .ok()
+        }
+        .await;
+        let Some(props) = props else { return };
+        self.context_size = props["default_generation_settings"]["n_ctx"]
             .as_u64()
-            .and_then(|n| u32::try_from(n).ok())
+            .and_then(|n| u32::try_from(n).ok());
+        let caps = &props["chat_template_caps"];
+        self.tools = caps["supports_tools"].as_bool() == Some(true)
+            && caps["supports_tool_calls"].as_bool() == Some(true);
+    }
+
+    /// Whether the model's chat template knows how to offer it tools.
+    pub fn supports_tools(&self) -> bool {
+        self.tools
     }
 
     /// The context size the server actually uses, if it reported one.
