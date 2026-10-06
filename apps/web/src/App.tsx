@@ -15,6 +15,7 @@ import { ChatPage } from "./pages/Chat";
 import { OverviewPage } from "./pages/Overview";
 import { ModelsPage } from "./pages/Models";
 import { ProvidersPage } from "./pages/Providers";
+import { ToolsPage } from "./pages/Tools";
 import { SkillsPage } from "./pages/Skills";
 import { ApiPage } from "./pages/Api";
 import { DevicesPage } from "./pages/Devices";
@@ -199,6 +200,12 @@ const NAV: NavItem[] = [
     id: "providers",
     label: "Cloud models",
     icon: "M7 18h10a4 4 0 00.5-8 6 6 0 00-11.4-1.5A4.5 4.5 0 007 18z",
+    admin: true,
+  },
+  {
+    id: "tools",
+    label: "Tools",
+    icon: "M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z",
     admin: true,
   },
   { id: "skills", label: "Skills", icon: "M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h7", admin: true },
@@ -396,6 +403,7 @@ function Shell({
           {current === "overview" && <OverviewPage />}
           {current === "models" && <ModelsPage />}
           {current === "providers" && <ProvidersPage />}
+          {current === "tools" && <ToolsPage />}
           {current === "skills" && <SkillsPage />}
           {current === "devices" && <DevicesPage />}
           {current === "api" && <ApiPage />}

@@ -739,7 +739,12 @@ impl Engine {
             Default::default()
         };
         endpoint.tools = toolbox.definitions.clone();
-        let (mut prompt, skills) = self.build_prompt_with(conversation, context);
+        let tool_tokens: usize = endpoint
+            .tools
+            .iter()
+            .map(|t| t.to_string().chars().count() / 3)
+            .sum();
+        let (mut prompt, skills) = self.build_prompt_with(conversation, context, tool_tokens);
         on_event(ChatEvent::Skills { names: skills });
         let client = if endpoint.llama {
             &self.inner.local

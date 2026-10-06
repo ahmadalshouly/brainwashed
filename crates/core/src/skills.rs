@@ -307,14 +307,16 @@ impl Engine {
 
     /// Builds the prompt the model actually sees, and names the skills used.
     pub fn build_prompt(&self, conversation: &[ChatMessage]) -> (Vec<ChatMessage>, Vec<String>) {
-        self.build_prompt_with(conversation, None)
+        self.build_prompt_with(conversation, None, 0)
     }
 
     /// `context` overrides the local model's context size, for cloud models.
+    /// `reserved` tokens of the context are kept free, for the tools offered.
     pub(crate) fn build_prompt_with(
         &self,
         conversation: &[ChatMessage],
         context: Option<u32>,
+        reserved: usize,
     ) -> (Vec<ChatMessage>, Vec<String>) {
         let settings = self.settings();
         let mut system = settings.system_prompt;
@@ -365,7 +367,7 @@ impl Engine {
                 .unwrap()
                 .map_or(settings.context_size, |n| n.min(settings.context_size))
         });
-        fit_to_context(&mut messages, &system, context);
+        fit_to_context(&mut messages, &system, context, reserved);
         messages.insert(0, ChatMessage::new(Role::System, system));
         (messages, used)
     }
@@ -381,14 +383,24 @@ fn estimate_tokens(text: &str) -> usize {
 const IMAGE_TOKENS: usize = 768;
 
 fn message_tokens(m: &ChatMessage) -> usize {
-    estimate_tokens(&m.text()) + m.images().count() * IMAGE_TOKENS
+    let calls: usize = m
+        .tool_calls
+        .iter()
+        .map(|c| estimate_tokens(&c.name) + estimate_tokens(&c.arguments.to_string()))
+        .sum();
+    estimate_tokens(&m.text()) + m.images().count() * IMAGE_TOKENS + calls
 }
 
 /// Drops the oldest turns until the prompt leaves room for a reply. The
 /// latest message is always kept.
-fn fit_to_context(messages: &mut Vec<ChatMessage>, system: &str, context_size: u32) {
+fn fit_to_context(
+    messages: &mut Vec<ChatMessage>,
+    system: &str,
+    context_size: u32,
+    reserved: usize,
+) {
     let reply_reserve = (context_size as usize / 4).max(256);
-    let budget = (context_size as usize).saturating_sub(reply_reserve);
+    let budget = (context_size as usize).saturating_sub(reply_reserve + reserved);
     let mut total: usize =
         estimate_tokens(system) + messages.iter().map(message_tokens).sum::<usize>();
     while total > budget && messages.len() > 1 {

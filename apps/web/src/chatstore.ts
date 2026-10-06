@@ -3,7 +3,7 @@
 // over on first load. When IndexedDB is unavailable (some private windows)
 // chats last until the page closes.
 
-import type { Attachment, ChatMessage, ChatOptions, ReplyStats, ToolCall } from "@brainwashed/api";
+import type { Attachment, ChatMessage, ChatOptions, ReplyStats, ToolCall, ToolResult } from "@brainwashed/api";
 import { loadChats as loadLegacyChats, saveChats as clearLegacyChats } from "./storage";
 
 /** A message as the chat shows it, with what streamed alongside the answer. */
@@ -14,9 +14,17 @@ export interface Turn extends ChatMessage {
   /** How long the model thought, in seconds. */
   thoughtFor?: number;
   stats?: ReplyStats;
-  /** Tools the model tried to use. */
-  toolCalls?: ToolCall[];
+  /** Tools the model called. */
+  toolCalls?: ShownCall[];
   error?: string;
+}
+
+/** A tool call as the chat shows it. */
+export interface ShownCall extends ToolCall {
+  /** What the tool returned, for calls the host ran. */
+  result?: ToolResult;
+  /** Where in the answer's text the call was made. */
+  at?: number;
 }
 
 export interface Conversation {

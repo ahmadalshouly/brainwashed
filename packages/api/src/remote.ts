@@ -14,6 +14,8 @@ import type {
   ChatOptions,
   ChatMessage,
   DocumentText,
+  McpServer,
+  McpServerInfo,
   ProviderInfo,
   ProviderInput,
   DeviceIdentity,
@@ -354,6 +356,13 @@ export class RemoteHost {
   /** Adds or updates a provider. Leave `apiKey` out to keep the saved key, or send "" to remove it. */
   saveProvider = (provider: ProviderInput) => this.call<ProviderInfo>("saveProvider", { provider });
   deleteProvider = (id: string) => this.call<null>("deleteProvider", { id });
+  /** MCP servers whose tools models can use. Admins only. */
+  mcpServers = () => this.call<McpServerInfo[]>("mcpServers");
+  /** Adds or changes an MCP server, then starts it in the background if it's on. */
+  saveMcpServer = (server: McpServer) => this.call<McpServerInfo>("saveMcpServer", { server });
+  deleteMcpServer = (id: string) => this.call<null>("deleteMcpServer", { id });
+  setMcpServerEnabled = (id: string, enabled: boolean) => this.call<McpServerInfo>("setMcpServerEnabled", { id, enabled });
+  restartMcpServer = (id: string) => this.call<McpServerInfo>("restartMcpServer", { id });
   /** Lists a provider's models, to check the address and key. `id` uses the saved key when `apiKey` is left out. */
   providerModels = (baseUrl: string, apiKey?: string, id?: string) =>
     this.call<string[]>("providerModels", { baseUrl, apiKey, id });
