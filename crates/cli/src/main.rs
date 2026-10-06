@@ -849,7 +849,7 @@ async fn chat(engine: Engine) -> Result {
     progress.abort();
     clear_line();
     println!(
-        "Chatting with {}. Type a message, /new to start over, or /quit.\n",
+        "Chatting with {}. Type a message, /new to start over, or /quit. Ctrl+C stops an answer.\n",
         model.name
     );
 
@@ -858,7 +858,13 @@ async fn chat(engine: Engine) -> Result {
     loop {
         print!("> ");
         std::io::stdout().flush()?;
-        let Some(line) = lines.next_line().await? else {
+        // Once Ctrl+C has stopped an answer it no longer quits by itself.
+        let line = tokio::select! {
+            line = lines.next_line() => line?,
+            _ = tokio::signal::ctrl_c() => None,
+        };
+        let Some(line) = line else {
+            println!();
             break;
         };
         let line = line.trim();
@@ -875,37 +881,48 @@ async fn chat(engine: Engine) -> Result {
         conversation.push(ChatMessage::new(Role::User, line));
         let mut thinking = false;
         let mut asked = None;
-        let mut answer = engine
-            .chat(&conversation, &SamplingOptions::default(), |event| {
-                match event {
-                    ChatEvent::Skills { names } if !names.is_empty() => {
-                        println!("(using skill: {})", names.join(", "));
-                    }
-                    ChatEvent::Reasoning { .. } if !thinking => {
-                        thinking = true;
-                        print!("(thinking...) ");
-                    }
-                    ChatEvent::Content { text } => print!("{text}"),
-                    ChatEvent::ToolCall(call) if call.name == "ask_user" => {
-                        let ask = call.ask_user().unwrap_or_default();
-                        print!("\n{}", ask.question);
-                        for (i, o) in ask.options.iter().enumerate() {
-                            print!("\n  {}. {o}", i + 1);
-                        }
-                        asked = Some(ask.text());
-                    }
-                    ChatEvent::ToolCall(call) if call.name.is_empty() => {
-                        print!("\n(the model tried to use a tool BrainWashed doesn't have)")
-                    }
-                    ChatEvent::ToolCall(call) => print!(
-                        "\n(the model tried to use the tool {}, which BrainWashed doesn't have)",
-                        call.name
-                    ),
-                    _ => {}
+        let written = std::cell::RefCell::new(String::new());
+        let options = SamplingOptions::default();
+        let reply = engine.chat(&conversation, &options, |event| {
+            match event {
+                ChatEvent::Skills { names } if !names.is_empty() => {
+                    println!("(using skill: {})", names.join(", "));
                 }
-                let _ = std::io::stdout().flush();
-            })
-            .await?;
+                ChatEvent::Reasoning { .. } if !thinking => {
+                    thinking = true;
+                    print!("(thinking...) ");
+                }
+                ChatEvent::Content { text } => {
+                    print!("{text}");
+                    written.borrow_mut().push_str(&text);
+                }
+                ChatEvent::ToolCall(call) if call.name == "ask_user" => {
+                    let ask = call.ask_user().unwrap_or_default();
+                    print!("\n{}", ask.question);
+                    for (i, o) in ask.options.iter().enumerate() {
+                        print!("\n  {}. {o}", i + 1);
+                    }
+                    asked = Some(ask.text());
+                }
+                ChatEvent::ToolCall(call) if call.name.is_empty() => {
+                    print!("\n(the model tried to use a tool BrainWashed doesn't have)")
+                }
+                ChatEvent::ToolCall(call) => print!(
+                    "\n(the model tried to use the tool {}, which BrainWashed doesn't have)",
+                    call.name
+                ),
+                _ => {}
+            }
+            let _ = std::io::stdout().flush();
+        });
+        // Ctrl+C stops this answer instead of quitting.
+        let mut answer = tokio::select! {
+            answer = reply => answer?,
+            _ = tokio::signal::ctrl_c() => {
+                print!(" (stopped)");
+                written.take()
+            }
+        };
         println!("\n");
         // The question stays in the history, so the reply makes sense.
         if let Some(ask) = asked {

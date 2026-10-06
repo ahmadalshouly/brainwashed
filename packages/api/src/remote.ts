@@ -426,6 +426,15 @@ export class RemoteHost {
     return this.readFrames(await this.post("chatResume", { replyId, after }, signal, true), onEvent);
   }
 
+  /**
+   * Stops a reply started with `chat` and a `replyId`. Its stream then ends
+   * with `done` holding the text written so far. Without a `replyId`, closing
+   * the stream (aborting `chat`) stops the reply instead.
+   */
+  async chatStop(replyId: string): Promise<void> {
+    await this.call("chatStop", { replyId });
+  }
+
   private async readFrames(res: Awaited<ReturnType<FetchLike>>, onEvent: (e: ChatEvent) => void): Promise<string> {
     let answer: string | undefined;
     const handle = (line: string) => {
