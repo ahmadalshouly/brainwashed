@@ -4,6 +4,7 @@
 mod community;
 mod documents;
 mod engine;
+mod mcp;
 mod providers;
 mod settings;
 mod skills;
@@ -20,7 +21,8 @@ pub use community::{
     raw_skill_url, CommunitySkill, SkillOrigin, SkillPreview, DEFAULT_SKILL_INDEX, ORIGIN_FILE,
 };
 pub use documents::{read_document, Document, MAX_DOCUMENT_BYTES};
-pub use engine::{CatalogItem, Engine, EngineConfig, EngineState, Event, HostInfo};
+pub use engine::{CatalogItem, ChatAccess, Engine, EngineConfig, EngineState, Event, HostInfo};
+pub use mcp::{McpServer, McpServerInfo, McpStatus, McpToolInfo, McpTransport, ToolResult};
 pub use providers::{ChatModel, Provider, ProviderInfo, LOCAL_MODEL};
 pub use settings::{RemoteAccess, Settings};
 pub use skills::{ChatEvent, SkillInfo, SkillList, MAX_SKILL_CHARS};

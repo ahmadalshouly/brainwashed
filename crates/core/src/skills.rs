@@ -88,9 +88,14 @@ pub enum ChatEvent {
     Reasoning {
         text: String,
     },
-    /// A tool the model tried to use. Nothing runs it; clients show it.
+    /// A tool the model called. Calls of MCP tools are run and their
+    /// result follows as `tool_result`; `ask_user` carries a question for
+    /// the person; anything else is only shown.
     #[serde(rename = "tool_call")]
     ToolCall(ToolCall),
+    /// What a tool returned, after its `tool_call`.
+    #[serde(rename = "tool_result")]
+    ToolResult(crate::ToolResult),
     /// Sent once, after the answer.
     Stats(ReplyStats),
 }

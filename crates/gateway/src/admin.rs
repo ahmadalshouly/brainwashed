@@ -6,7 +6,7 @@
 use crate::devices::{Device, DeviceRole};
 use crate::relay;
 use crate::server::{download_entry, Gateway};
-use brainwashed_core::{EngineState, Provider, ProviderInfo, Settings};
+use brainwashed_core::{EngineState, McpServer, Provider, ProviderInfo, Settings};
 use serde_json::{json, Value};
 
 /// Calls any paired device may make.
@@ -41,6 +41,10 @@ const AUDITED: &[&str] = &[
     "deleteProvider",
     "createApiKey",
     "revokeApiKey",
+    "saveMcpServer",
+    "deleteMcpServer",
+    "setMcpServerEnabled",
+    "restartMcpServer",
 ];
 
 type CallResult = Result<Value, String>;
@@ -71,7 +75,12 @@ pub(crate) async fn handle(
     }
     let target = ["id", "name", "repo", "role", "spec"]
         .iter()
-        .find_map(|k| params[*k].as_str().or(params["provider"][*k].as_str()))
+        .find_map(|k| {
+            params[*k]
+                .as_str()
+                .or(params["provider"][*k].as_str())
+                .or(params["server"][*k].as_str())
+        })
         .map(str::to_string);
     let result = call(gw, device, method, params).await;
     if AUDITED.contains(&method) {
@@ -220,6 +229,39 @@ async fn call(gw: &Gateway, device: &Device, method: &str, params: Value) -> Cal
                 params["apiKey"].as_str(),
                 params["id"].as_str(),
             )
+            .await
+            .map_err(err)
+            .and_then(to_json),
+
+        // ----- MCP servers -----
+        // Admins only: a server can run commands on this computer.
+        "mcpServers" => to_json(engine.mcp_servers()),
+        "saveMcpServer" => {
+            let server: McpServer = serde_json::from_value(params["server"].clone())
+                .map_err(|e| format!("bad server: {e}"))?;
+            engine
+                .save_mcp_server(server)
+                .await
+                .map_err(err)
+                .and_then(to_json)
+        }
+        "deleteMcpServer" => {
+            engine
+                .delete_mcp_server(str_param(&params, "id")?)
+                .await
+                .map_err(err)?;
+            Ok(Value::Null)
+        }
+        "setMcpServerEnabled" => {
+            let enabled = params["enabled"].as_bool().ok_or("missing enabled")?;
+            engine
+                .set_mcp_server_enabled(str_param(&params, "id")?, enabled)
+                .await
+                .map_err(err)
+                .and_then(to_json)
+        }
+        "restartMcpServer" => engine
+            .restart_mcp_server(str_param(&params, "id")?)
             .await
             .map_err(err)
             .and_then(to_json),

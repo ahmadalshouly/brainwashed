@@ -197,6 +197,8 @@ impl Engine {
             model: None,
             llama: false,
             ask_user: false,
+            tools: Vec::new(),
+            no_more_calls: false,
         };
         Ok(chat::list_models(&self.inner.client, &endpoint).await?)
     }
@@ -254,6 +256,8 @@ impl Engine {
             model: Some(model.to_string()),
             llama: false,
             ask_user: false,
+            tools: Vec::new(),
+            no_more_calls: false,
         })
     }
 }

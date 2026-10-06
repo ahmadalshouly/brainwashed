@@ -1,24 +1,27 @@
-//! Tool calls that models write into their answers. BrainWashed gives models
-//! no tools, but models trained for tool use (LFM2, Qwen, Hermes, Mistral,
-//! Llama 3.1...) sometimes call one anyway, in their own markup. This finds
-//! that markup in the streamed text and turns it into structured calls, so
-//! people never see raw `<|tool_call_start|>` tokens.
+//! Tool calls that models write into their answers. llama-server reads the
+//! calls of tools it offered itself, but models trained for tool use (LFM2,
+//! Qwen, Hermes, Mistral, Llama 3.1...) also call tools in their own markup,
+//! offered or not. This finds that markup in the streamed text and turns it
+//! into structured calls, so people never see raw `<|tool_call_start|>`
+//! tokens and calls of MCP tools still run.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 /// A tool call the model made.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCall {
     /// `call_0`, `call_1`... in the order the reply made them.
     #[serde(default)]
     pub id: String,
     /// Empty when the call couldn't be read.
+    #[serde(default)]
     pub name: String,
     /// Named arguments; positional ones are under "0", "1"...
+    #[serde(default)]
     pub arguments: Value,
     /// The model's text, when the call couldn't be read.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
 }
 

@@ -158,6 +158,8 @@ async fn streams_content_and_reasoning() {
                 data: "AAAA".into(),
             },
         ],
+        tool_calls: Vec::new(),
+        tool_call_id: None,
     };
     let options = SamplingOptions {
         temperature: Some(0.2),
@@ -336,6 +338,8 @@ async fn talks_to_cloud_providers() {
         model: Some("gpt-a".into()),
         llama: false,
         ask_user: false,
+        tools: Vec::new(),
+        no_more_calls: false,
     };
 
     assert_eq!(

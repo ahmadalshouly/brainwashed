@@ -202,8 +202,10 @@ name = "brainwashed-core"
 version = "0.0.0"
 dependencies = [
  "axum",
+ "brainwashed-mcp",
  "brainwashed-runtime",
  "brainwashed-skills",
+ "futures-util",
  "pdf-extract",
  "reqwest",
  "serde",
@@ -244,6 +246,20 @@ dependencies = [
  "tower",
  "tracing",
  "webpki-roots 1.0.9",
+]
+
+[[package]]
+name = "brainwashed-mcp"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
