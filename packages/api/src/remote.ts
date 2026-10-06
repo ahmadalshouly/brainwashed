@@ -215,13 +215,16 @@ async function reach<T>(
   const hasRelay = addresses.some((a) => /^https?:\/\//.test(a));
   for (const address of addresses) {
     const isRelay = /^https?:\/\//.test(address);
+    let answered = false;
     const controller = new AbortController();
     const onOuterAbort = () => controller.abort();
     outer?.addEventListener("abort", onOuterAbort);
     const timeout = (hasRelay && !isRelay ? LAN_TIMEOUT_WITH_RELAY_MS : CONNECT_TIMEOUT_MS) + extraMs;
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
-      return { result: await attempt(baseUrl(address, port), controller.signal), address };
+      const result = await attempt(baseUrl(address, port), controller.signal);
+      answered = true;
+      return { result, address };
     } catch (e) {
       // A relay saying the computer is offline is worth reporting as is.
       if (e instanceof HostReplyError && !(isRelay && e.status === 503 && address !== addresses[addresses.length - 1])) throw e;
@@ -229,7 +232,9 @@ async function reach<T>(
       // Network failure or timeout: try the next address.
     } finally {
       clearTimeout(timer);
-      outer?.removeEventListener("abort", onOuterAbort);
+      // Once an address answers, the caller's signal still has to reach the
+      // request, so stopping a streamed reply closes the connection.
+      if (!answered) outer?.removeEventListener("abort", onOuterAbort);
     }
   }
   throw new Error(
@@ -414,7 +419,7 @@ export class RemoteHost {
     /** `model`: "local" or "<provider>/<model>" from `chatModels`; the local model when left out. */
     extra?: { options?: ChatOptions; model?: string; replyId?: string },
   ): Promise<string> {
-    return this.readFrames(await this.post("chat", { messages, ...extra }, signal, true), onEvent);
+    return this.readFrames(await this.post("chat", { messages, ...extra }, signal, true), onEvent, signal);
   }
 
   /**
@@ -423,7 +428,7 @@ export class RemoteHost {
    * as it is written. Rejects if the computer no longer has the reply.
    */
   async chatResume(replyId: string, after: number, onEvent: (e: ChatEvent) => void, signal?: AbortSignal): Promise<string> {
-    return this.readFrames(await this.post("chatResume", { replyId, after }, signal, true), onEvent);
+    return this.readFrames(await this.post("chatResume", { replyId, after }, signal, true), onEvent, signal);
   }
 
   /**
@@ -431,13 +436,18 @@ export class RemoteHost {
    * with `done` holding the text written so far. Without a `replyId`, closing
    * the stream (aborting `chat`) stops the reply instead.
    */
-  async chatStop(replyId: string): Promise<void> {
-    await this.call("chatStop", { replyId });
-  }
+  chatStop = (replyId: string) => this.call<null>("chatStop", { replyId });
 
-  private async readFrames(res: Awaited<ReturnType<FetchLike>>, onEvent: (e: ChatEvent) => void): Promise<string> {
+  private async readFrames(
+    res: Awaited<ReturnType<FetchLike>>,
+    onEvent: (e: ChatEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const stopped = () => new Error("Stopped.");
     let answer: string | undefined;
     const handle = (line: string) => {
+      // Not every fetch ends the body when its request is aborted; stop here regardless.
+      if (signal?.aborted) throw stopped();
       if (!line.trim()) return;
       const frame = open<{ event?: ChatEvent; done?: string; error?: string }>(
         JSON.parse(line),
@@ -451,29 +461,48 @@ export class RemoteHost {
 
     if (res.body && typeof res.body.getReader === "function") {
       const reader = res.body.getReader();
-      let buffer = "";
-      let pending = new Uint8Array(0);
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        // Keep any partial UTF-8 sequence for the next chunk by splitting on newline bytes.
-        const merged = new Uint8Array(pending.length + value.length);
-        merged.set(pending);
-        merged.set(value, pending.length);
-        const lastNewline = merged.lastIndexOf(10);
-        if (lastNewline < 0) {
-          pending = merged;
-          continue;
-        }
-        buffer = utf8Decode(merged.subarray(0, lastNewline));
-        pending = merged.slice(lastNewline + 1);
-        buffer.split("\n").forEach(handle);
+      // Stop at once when asked, even if this fetch keeps a read waiting after cancel.
+      let onAbort = () => {};
+      const aborted = new Promise<void>((resolve) => {
+        onAbort = () => {
+          reader.cancel().catch(() => {});
+          resolve();
+        };
+      });
+      if (signal?.aborted) onAbort();
+      signal?.addEventListener("abort", onAbort);
+      try {
+        const body = this.readBody(reader, handle);
+        body.catch(() => {}); // A late failure after stopping isn't worth reporting.
+        await Promise.race([body, aborted]);
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
       }
-      if (pending.length) handle(utf8Decode(pending));
     } else {
       (await res.text()).split("\n").forEach(handle);
     }
+    if (signal?.aborted) throw stopped();
     if (answer === undefined) throw new Error("The reply ended unexpectedly.");
     return answer;
+  }
+
+  private async readBody(reader: ReadableStreamDefaultReader<Uint8Array>, handle: (line: string) => void) {
+    let pending = new Uint8Array(0);
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      // Keep any partial UTF-8 sequence for the next chunk by splitting on newline bytes.
+      const merged = new Uint8Array(pending.length + value.length);
+      merged.set(pending);
+      merged.set(value, pending.length);
+      const lastNewline = merged.lastIndexOf(10);
+      if (lastNewline < 0) {
+        pending = merged;
+        continue;
+      }
+      pending = merged.slice(lastNewline + 1);
+      utf8Decode(merged.subarray(0, lastNewline)).split("\n").forEach(handle);
+    }
+    if (pending.length) handle(utf8Decode(pending));
   }
 }
