@@ -8,7 +8,7 @@ import {
   type EngineState,
   type PairedHost,
 } from "@brainwashed/api";
-import { ACCENTS, loadHost, loadLook, loadPage, saveChats, saveHost, saveLook, savePage, type Look } from "./storage";
+import { ACCENTS, MONO, swatch, loadHost, loadLook, loadPage, saveChats, saveHost, saveLook, savePage, type Look } from "./storage";
 import { clearConversations } from "./chatstore";
 import { errorText, HostContext, stateText, type HostContextValue } from "./ui";
 import { ChatPage } from "./pages/Chat";
@@ -72,7 +72,13 @@ function useLook(): [Look, (l: Look) => void] {
     const root = document.documentElement;
     if (look.theme === "auto") delete root.dataset.theme;
     else root.dataset.theme = look.theme;
-    root.style.setProperty("--accent", look.accent);
+    if (look.accent === MONO) {
+      root.dataset.accent = MONO;
+      root.style.removeProperty("--accent");
+    } else {
+      delete root.dataset.accent;
+      root.style.setProperty("--accent", look.accent);
+    }
     saveLook(look);
   }, [look]);
   return [look, setLook];
@@ -158,7 +164,7 @@ function sameKey(a: string, b: string): boolean {
 function Welcome({ notice }: { notice: string | null }) {
   return (
     <main className="center welcome">
-      <img src="/logo.svg" alt="" width={64} height={64} />
+      <img src="/logo.png" alt="" width={64} height={64} />
       <h1>BrainWashed</h1>
       {notice && <div className="banner error">{notice}</div>}
       <p>This browser isn't connected to your computer yet.</p>
@@ -318,7 +324,7 @@ function Shell({
       <div className={`shell ${navOpen ? "nav-open" : ""}`}>
         <aside className="sidebar">
           <div className="brand">
-            <img src="/logo.svg" alt="" width={28} height={28} />
+            <img src="/logo.png" alt="" width={28} height={28} />
             <div>
               <strong>{paired.hostName}</strong>
               <span className={`status-dot ${offline ? "off" : ready ? "on" : "wait"}`}>
@@ -359,9 +365,9 @@ function Shell({
                       key={c}
                       role="radio"
                       aria-checked={look.accent === c}
-                      aria-label={c}
+                      aria-label={c === MONO ? "Black and white" : c}
                       className={look.accent === c ? "swatch on" : "swatch"}
-                      style={{ background: c }}
+                      style={{ background: swatch(c) }}
                       onClick={() => setLook({ ...look, accent: c })}
                     />
                   ))}

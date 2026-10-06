@@ -40,6 +40,24 @@
   }
 }
 
+/* Black and white, like the logo. */
+:root[data-accent="mono"] {
+  --accent: #111114;
+  --accent-text: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="mono"]:not([data-theme="light"]) {
+    --accent: #f5f5f7;
+    --accent-text: #111114;
+  }
+}
+
+:root[data-accent="mono"][data-theme="dark"] {
+  --accent: #f5f5f7;
+  --accent-text: #111114;
+}
+
 :root[data-theme="dark"] {
   --bg: #131316;
   --panel: #1c1c20;

@@ -34,7 +34,7 @@ import {
   type Conversation,
   type Turn,
 } from "../chatstore";
-import { ACCENTS, type Look } from "../storage";
+import { ACCENTS, MONO, swatch, type Look } from "../storage";
 import { errorText, stateText, useHost, useLoad } from "../ui";
 
 const MODEL_KEY = "brainwashed.model";
@@ -933,9 +933,9 @@ export function ChatPage({
                     key={c}
                     role="radio"
                     aria-checked={look.accent === c}
-                    aria-label={c}
+                    aria-label={c === MONO ? "Black and white" : c}
                     className={look.accent === c ? "swatch on" : "swatch"}
-                    style={{ background: c }}
+                    style={{ background: swatch(c) }}
                     onClick={() => setLook({ ...look, accent: c })}
                   />
                 ))}

@@ -65,10 +65,23 @@ export function titleFor(messages: ChatMessage[]): string {
 export type ThemeMode = "auto" | "light" | "dark";
 export interface Look {
   theme: ThemeMode;
+  /** `#rrggbb`, or `MONO` for black and white like the logo. */
   accent: string;
+  /** Set once the black and white default was offered. */
+  monoSeen?: boolean;
 }
-export const ACCENTS = ["#4f46e5", "#0d9488", "#db2777", "#ea580c", "#2563eb", "#65a30d"];
-export const loadLook = (): Look => ({ theme: "auto", accent: ACCENTS[0], ...read<Partial<Look>>(LOOK) });
+export const MONO = "mono";
+export const ACCENTS = [MONO, "#4f46e5", "#0d9488", "#db2777", "#ea580c", "#2563eb", "#65a30d"];
+/** Background of an accent's swatch. */
+export const swatch = (accent: string) =>
+  accent === MONO ? "linear-gradient(135deg, #111114 50%, #f5f5f7 50%)" : accent;
+export const loadLook = (): Look => {
+  const saved = read<Partial<Look>>(LOOK) ?? {};
+  // Indigo was the old default and was saved for everyone, so it moves to
+  // black and white once; picking indigo again later sticks.
+  const keep = saved.accent && (saved.monoSeen || saved.accent !== "#4f46e5");
+  return { theme: "auto", ...saved, accent: keep ? saved.accent! : MONO, monoSeen: true };
+};
 export const saveLook = (l: Look) => write(LOOK, l);
 
 export const loadPage = () => read<string>(PAGE);
