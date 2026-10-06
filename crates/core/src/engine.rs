@@ -8,7 +8,7 @@ use brainwashed_runtime::{
     download,
     gguf::{self, DraftKind},
     llama::{self, LlamaServer, ServerOptions},
-    release, Attachment, ChatMessage, Hardware, Role,
+    release, Attachment, ChatMessage, Hardware, ReplyStats, Role,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -92,6 +92,8 @@ pub enum Event {
     },
     ModelsChanged,
     SkillsChanged,
+    /// MCP servers were added, changed or removed.
+    ToolsChanged,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -129,6 +131,10 @@ pub(crate) struct Inner {
     tools: RwLock<bool>,
     pub(crate) events: broadcast::Sender<Event>,
     pub(crate) skills: RwLock<SkillState>,
+    pub(crate) mcp: crate::mcp::McpState,
+    /// Talks to MCP servers over HTTP. No overall timeout: answers stream
+    /// for as long as a tool runs.
+    pub(crate) mcp_http: reqwest::Client,
 }
 
 impl Engine {
@@ -151,6 +157,11 @@ impl Engine {
         }
         kill_stale_server(&config.data_dir);
         let skills = SkillState::open(&config.data_dir.join("skills"))?;
+        let mcp_http = reqwest::Client::builder()
+            .user_agent(format!("BrainWashed/{}", config.app_version))
+            .connect_timeout(Duration::from_secs(20))
+            .build()
+            .map_err(brainwashed_runtime::Error::from)?;
         Ok(Engine {
             inner: Arc::new(Inner {
                 client,
@@ -166,6 +177,8 @@ impl Engine {
                 tools: RwLock::new(false),
                 events: broadcast::channel(256).0,
                 skills: RwLock::new(skills),
+                mcp: Default::default(),
+                mcp_http,
                 config,
             }),
         })
@@ -228,6 +241,10 @@ impl Engine {
             .ok()?;
         let body = res.text().await.ok()?;
         crate::updates::newer_release(&self.inner.config.app_version, &body)
+    }
+
+    pub(crate) fn app_version(&self) -> &str {
+        &self.inner.config.app_version
     }
 
     pub fn host_name(&self) -> String {
@@ -649,32 +666,33 @@ impl Engine {
     // ----- chat -----
 
     /// Streams the local model's reply to `conversation`. The first event
-    /// names the skills used; the rest are pieces of the answer, then stats.
-    /// Returns the full answer. The model may ask the person to pick an
-    /// option (a `tool_call` named `ask_user`); their pick comes back as the
-    /// next user message.
+    /// names the skills used; the rest are pieces of the answer, tool calls
+    /// and their results, then stats. Returns the full answer. The model may
+    /// ask the person to pick an option (a `tool_call` named `ask_user`);
+    /// their pick comes back as the next user message.
     pub async fn chat(
         &self,
         conversation: &[ChatMessage],
         sampling: &SamplingOptions,
         on_event: impl FnMut(ChatEvent),
     ) -> Result<String> {
-        self.chat_with(conversation, sampling, None, true, true, on_event)
+        self.chat_with(conversation, sampling, None, ChatAccess::ADMIN, on_event)
             .await
     }
 
     /// Like [`Engine::chat`], with the model picked by id: `local` (or None)
     /// for the model on this computer, `<provider>/<model>` for a cloud
-    /// provider. `admin` decides which provider models are allowed.
-    /// `ask_user` offers the local model the tool to ask the person to pick
-    /// an option, for clients that can show the question.
+    /// provider. `access` decides which provider models and MCP servers the
+    /// chat may use.
+    ///
+    /// When the model calls MCP tools, they run and the model gets their
+    /// results and carries on, until it answers without calling any.
     pub async fn chat_with(
         &self,
         conversation: &[ChatMessage],
         sampling: &SamplingOptions,
         model: Option<&str>,
-        admin: bool,
-        ask_user: bool,
+        access: ChatAccess,
         mut on_event: impl FnMut(ChatEvent),
     ) -> Result<String> {
         // The chat's own settings win; the admin's defaults fill the rest.
@@ -683,12 +701,13 @@ impl Engine {
             .validate()
             .map_err(|e| Error::Invalid(e.to_string()))?;
         check_attachments(conversation)?;
-        let (endpoint, vision, context) =
+        let (mut endpoint, vision, context, knows_tools) =
             match model.filter(|m| *m != crate::providers::LOCAL_MODEL) {
                 Some(id) => (
-                    self.provider_endpoint(id, admin)?,
+                    self.provider_endpoint(id, access.admin)?,
                     true,
                     Some(CLOUD_CONTEXT),
+                    true,
                 ),
                 None => {
                     let base_url = self
@@ -698,9 +717,10 @@ impl Engine {
                         .unwrap()
                         .clone()
                         .ok_or_else(|| Error::Invalid("no model is loaded yet".into()))?;
+                    let tools = *self.inner.tools.read().unwrap();
                     let mut endpoint = chat::Endpoint::llama(base_url);
-                    endpoint.ask_user = ask_user && *self.inner.tools.read().unwrap();
-                    (endpoint, self.vision(), None)
+                    endpoint.ask_user = access.ask_user && tools;
+                    (endpoint, self.vision(), None, tools)
                 }
             };
         let asks_about_pictures = conversation
@@ -713,25 +733,164 @@ impl Engine {
                 "This model can't see pictures. Switch to a model that can, like Gemma 3 4B or Qwen2.5 VL 3B, or ask an admin to download one.".into(),
             ));
         }
-        let (prompt, skills) = self.build_prompt_with(conversation, context);
+        let toolbox = if access.tools && knows_tools {
+            self.toolbox(access.admin).await
+        } else {
+            Default::default()
+        };
+        endpoint.tools = toolbox.definitions.clone();
+        let tool_tokens: usize = endpoint
+            .tools
+            .iter()
+            .map(|t| t.to_string().chars().count() / 3)
+            .sum();
+        let (mut prompt, skills) = self.build_prompt_with(conversation, context, tool_tokens);
         on_event(ChatEvent::Skills { names: skills });
         let client = if endpoint.llama {
             &self.inner.local
         } else {
             &self.inner.client
         };
-        Ok(
-            chat::stream_chat(client, &endpoint, &prompt, sampling, vision, |d| {
-                on_event(d.into())
-            })
-            .await?,
-        )
+        // Results take up to about half of the model's context.
+        let context = context.unwrap_or_else(|| self.context_size());
+        let max_result = (context as usize * 3 / 2).clamp(2_000, 40_000);
+
+        let mut answer = String::new();
+        let mut stats: Vec<ReplyStats> = Vec::new();
+        let mut next_call = 0;
+        let mut round = 0;
+        loop {
+            // The last round may not call tools, so the model has to answer.
+            endpoint.no_more_calls = round == MAX_TOOL_ROUNDS;
+            let mut round_stats = None;
+            let mut said_anything = false;
+            let gap = !answer.is_empty() && !answer.ends_with('\n');
+            let mut gap_sent = false;
+            let turn = chat::stream_turn(
+                client,
+                &endpoint,
+                &prompt,
+                sampling,
+                vision,
+                next_call,
+                |d| {
+                    said_anything = true;
+                    match d {
+                        chat::Delta::Stats(s) => round_stats = Some(s),
+                        chat::Delta::Content(text) => {
+                            // Words after tool calls start a new paragraph.
+                            if gap && !gap_sent {
+                                gap_sent = true;
+                                on_event(ChatEvent::Content {
+                                    text: "\n\n".into(),
+                                });
+                            }
+                            on_event(ChatEvent::Content { text });
+                        }
+                        other => on_event(other.into()),
+                    }
+                },
+            )
+            .await;
+            let turn = match turn {
+                Ok(turn) => turn,
+                // Some models' templates or llama.cpp can't take a tool's
+                // schema; answering without the tools beats failing.
+                Err(e) if round == 0 && !endpoint.tools.is_empty() && !said_anything => {
+                    tracing::warn!("the model refused the MCP tools, answering without them: {e}");
+                    endpoint.tools.clear();
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
+            stats.extend(round_stats);
+            if gap_sent {
+                answer.push_str("\n\n");
+            }
+            answer.push_str(&turn.answer);
+            next_call += turn.calls.len();
+            if turn.asked
+                || turn.calls.is_empty()
+                || endpoint.tools.is_empty()
+                || endpoint.no_more_calls
+            {
+                break;
+            }
+            prompt.push(ChatMessage::calling(turn.answer, turn.calls.clone()));
+            for call in &turn.calls {
+                let result = toolbox.run(call, max_result).await;
+                let content = if result.is_error {
+                    format!("Error: {}", result.content)
+                } else {
+                    result.content.clone()
+                };
+                on_event(ChatEvent::ToolResult(result));
+                prompt.push(ChatMessage::tool_result(&call.id, content));
+            }
+            round += 1;
+        }
+        on_event(ChatEvent::Stats(merge_stats(&stats)));
+        Ok(answer)
+    }
+
+    /// The context size of the loaded model, or the configured one.
+    fn context_size(&self) -> u32 {
+        let configured = self.settings().context_size;
+        self.inner
+            .loaded_context
+            .read()
+            .unwrap()
+            .map_or(configured, |n| n.min(configured))
     }
 
     /// Whether the loaded model can look at pictures.
     pub fn vision(&self) -> bool {
         *self.inner.vision.read().unwrap()
     }
+}
+
+/// What a chat may use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatAccess {
+    /// Admins may use every cloud model and MCP server; members only those
+    /// shared with them.
+    pub admin: bool,
+    /// Offer the local model the tool to ask the person to pick an option,
+    /// for clients that can show the question.
+    pub ask_user: bool,
+    /// Offer the tools of MCP servers, and run them.
+    pub tools: bool,
+}
+
+impl ChatAccess {
+    /// Everything: for the admin page's chat and the `brainwashed chat` command.
+    pub const ADMIN: ChatAccess = ChatAccess {
+        admin: true,
+        ask_user: true,
+        tools: true,
+    };
+}
+
+/// How many times one reply may go back to the model with tool results.
+const MAX_TOOL_ROUNDS: usize = 8;
+
+/// The stats of a reply made in several rounds: tokens add up, the speed is
+/// over all of them.
+fn merge_stats(rounds: &[ReplyStats]) -> ReplyStats {
+    let mut out = ReplyStats::default();
+    let mut seconds = 0.0;
+    for s in rounds {
+        out.prompt_tokens += s.prompt_tokens;
+        out.tokens += s.tokens;
+        if s.tokens_per_second > 0.0 {
+            seconds += s.tokens as f64 / s.tokens_per_second;
+        }
+        out.truncated = s.truncated;
+    }
+    if seconds > 0.0 {
+        out.tokens_per_second = out.tokens as f64 / seconds;
+    }
+    out
 }
 
 /// Context assumed for cloud models when trimming long conversations. Most

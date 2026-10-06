@@ -1,24 +1,27 @@
-//! Tool calls that models write into their answers. BrainWashed gives models
-//! no tools, but models trained for tool use (LFM2, Qwen, Hermes, Mistral,
-//! Llama 3.1...) sometimes call one anyway, in their own markup. This finds
-//! that markup in the streamed text and turns it into structured calls, so
-//! people never see raw `<|tool_call_start|>` tokens.
+//! Tool calls that models write into their answers. llama-server reads the
+//! calls of tools it offered itself, but models trained for tool use (LFM2,
+//! Qwen, Hermes, Mistral, Llama 3.1...) also call tools in their own markup,
+//! offered or not. This finds that markup in the streamed text and turns it
+//! into structured calls, so people never see raw `<|tool_call_start|>`
+//! tokens and calls of MCP tools still run.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 /// A tool call the model made.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCall {
     /// `call_0`, `call_1`... in the order the reply made them.
     #[serde(default)]
     pub id: String,
     /// Empty when the call couldn't be read.
+    #[serde(default)]
     pub name: String,
     /// Named arguments; positional ones are under "0", "1"...
+    #[serde(default)]
     pub arguments: Value,
     /// The model's text, when the call couldn't be read.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
 }
 
@@ -132,6 +135,12 @@ const MARKERS: &[(&str, Option<&str>)] = &[
     ("<|python_tag|>", None),                           // Llama 3.1
 ];
 
+/// Small models offered tools sometimes write the call as a JSON code block
+/// instead of their own markup. Such a block counts as a call only when it
+/// names a tool that was offered; any other code block stays text.
+const FENCE: &str = "```json";
+const FENCE_END: &str = "```";
+
 /// Takes tool calls out of a streamed answer, piece by piece. Text that
 /// might be the start of a marker is held back until it's clear.
 #[derive(Debug, Default)]
@@ -139,13 +148,97 @@ pub struct ToolCallFilter {
     buf: String,
     /// The marker of the block being read, if inside one.
     inside: Option<usize>,
+    /// Names of the tools offered, for calls written as JSON code blocks.
+    offered: Vec<String>,
+    /// Inside a JSON code block that may be a call.
+    fenced: bool,
+    /// Past the start of the answer, where a bare JSON call may stand.
+    started: bool,
 }
 
+/// How much of an answer that opens with `{` is held back to see whether
+/// it's a call.
+const MAX_BARE_CALL: usize = 8_000;
+
 impl ToolCallFilter {
+    /// A filter that also reads calls of these tools written as JSON code
+    /// blocks.
+    pub fn offering(names: Vec<String>) -> Self {
+        ToolCallFilter {
+            offered: names,
+            ..Default::default()
+        }
+    }
+
+    fn fences(&self) -> bool {
+        !self.offered.is_empty()
+    }
+
+    /// A finished JSON code block: a call if it names an offered tool.
+    fn fenced_block(&self, body: &str) -> Piece {
+        let call = serde_json::from_str::<Value>(body.trim())
+            .ok()
+            .and_then(|v| from_json(&v))
+            .filter(|c| self.offered.contains(&c.name));
+        match call {
+            Some(call) => Piece::Call(call),
+            None => Piece::Text(format!("{FENCE}{body}{FENCE_END}")),
+        }
+    }
+
+    /// An answer that opens with a bare JSON object naming an offered tool
+    /// is a call too. Returns None while it can't tell yet.
+    fn bare_call(&mut self, finished: bool) -> Option<Option<Piece>> {
+        let text = self.buf.trim_start();
+        if text.is_empty() {
+            return if finished { Some(None) } else { None };
+        }
+        if !text.starts_with('{') {
+            self.started = true;
+            return Some(None);
+        }
+        let skipped = self.buf.len() - text.len();
+        let mut values = serde_json::Deserializer::from_str(text).into_iter::<Value>();
+        match values.next() {
+            Some(Ok(v)) => {
+                self.started = true;
+                let end = skipped + values.byte_offset();
+                match from_json(&v).filter(|c| self.offered.contains(&c.name)) {
+                    Some(call) => {
+                        self.buf.drain(..end);
+                        Some(Some(Piece::Call(call)))
+                    }
+                    None => Some(None),
+                }
+            }
+            Some(Err(e)) if e.is_eof() && !finished && self.buf.len() < MAX_BARE_CALL => None,
+            _ => {
+                self.started = true;
+                Some(None)
+            }
+        }
+    }
+
     pub fn push(&mut self, text: &str) -> Vec<Piece> {
         self.buf.push_str(text);
         let mut out = Vec::new();
+        if !self.started && self.fences() {
+            match self.bare_call(false) {
+                None => return out,
+                Some(Some(call)) => out.push(call),
+                Some(None) => {}
+            }
+        }
         loop {
+            if self.fenced {
+                let Some(pos) = self.buf.find(FENCE_END) else {
+                    break;
+                };
+                let body: String = self.buf.drain(..pos + FENCE_END.len()).collect();
+                out.push(self.fenced_block(&body[..pos]));
+                self.fenced = false;
+                continue;
+            }
             if let Some(m) = self.inside {
                 let Some(end) = MARKERS[m].1 else { break };
                 let Some(pos) = self.buf.find(end) else { break };
@@ -159,6 +252,15 @@ impl ToolCallFilter {
                 .enumerate()
                 .filter_map(|(i, (start, _))| self.buf.find(start).map(|p| (p, i)))
                 .min();
+            let fence = self.buf.find(FENCE).filter(|_| self.fences());
+            if let Some(pos) = fence.filter(|f| first.is_none_or_after(*f)) {
+                if pos > 0 {
+                    out.push(Piece::Text(self.buf[..pos].to_string()));
+                }
+                self.buf.drain(..pos + FENCE.len());
+                self.fenced = true;
+                continue;
+            }
             if let Some((pos, m)) = first {
                 if pos > 0 {
                     out.push(Piece::Text(self.buf[..pos].to_string()));
@@ -167,7 +269,10 @@ impl ToolCallFilter {
                 self.inside = Some(m);
                 continue;
             }
-            let keep = held_back(&self.buf);
+            let mut keep = held_back(&self.buf);
+            if self.fences() {
+                keep = keep.max(held_back_of(&self.buf, FENCE));
+            }
             let ready = self.buf.len() - keep;
             if ready > 0 {
                 out.push(Piece::Text(self.buf[..ready].to_string()));
@@ -180,7 +285,22 @@ impl ToolCallFilter {
 
     /// Whatever is left when the answer ends.
     pub fn finish(&mut self) -> Vec<Piece> {
+        if !self.started && self.fences() {
+            if let Some(Some(call)) = self.bare_call(true) {
+                let mut out = vec![call];
+                out.extend(self.push(""));
+                out.extend(self.finish());
+                return out;
+            }
+        }
         let rest = std::mem::take(&mut self.buf);
+        if std::mem::take(&mut self.fenced) {
+            // An unclosed block: a call if it reads as one, else text.
+            return match self.fenced_block(&rest) {
+                Piece::Call(c) => vec![Piece::Call(c)],
+                Piece::Text(_) => vec![Piece::Text(format!("{FENCE}{rest}"))],
+            };
+        }
         match self.inside.take() {
             Some(_) if rest.trim().is_empty() => vec![],
             Some(_) => parse_block(&rest).into_iter().map(Piece::Call).collect(),
@@ -192,15 +312,33 @@ impl ToolCallFilter {
 
 /// Bytes at the end of `buf` that could be the start of a marker.
 fn held_back(buf: &str) -> usize {
+    MARKERS
+        .iter()
+        .map(|(start, _)| held_back_of(buf, start))
+        .max()
+        .unwrap_or(0)
+}
+
+/// Bytes at the end of `buf` that could be the start of `marker`.
+fn held_back_of(buf: &str, marker: &str) -> usize {
     let mut keep = 0;
-    for (start, _) in MARKERS {
-        for (i, _) in start.char_indices().skip(1) {
-            if buf.ends_with(&start[..i]) {
-                keep = keep.max(i);
-            }
+    for (i, _) in marker.char_indices().skip(1) {
+        if buf.ends_with(&marker[..i]) {
+            keep = keep.max(i);
         }
     }
     keep
+}
+
+trait Before {
+    /// True when there's no marker, or it starts after `pos`.
+    fn is_none_or_after(&self, pos: usize) -> bool;
+}
+
+impl Before for Option<(usize, usize)> {
+    fn is_none_or_after(&self, pos: usize) -> bool {
+        self.map_or(true, |(p, _)| p > pos)
+    }
 }
 
 /// Reads the calls in one block, in whichever format the model used.
@@ -581,6 +719,74 @@ mod tests {
         assert_eq!(shown, "Hi");
         assert_eq!(calls[0].name, "");
         assert_eq!(calls[0].raw.as_deref(), Some("this is not a call"));
+    }
+
+    #[test]
+    fn json_code_blocks_naming_an_offered_tool() {
+        let text = "Sure.\n```json\n{\n  \"name\": \"read_file\",\n  \"arguments\": {\"path\": \"/a.txt\"}\n}\n```";
+        for step in [1, 4, 1000] {
+            let mut f = ToolCallFilter::offering(vec!["read_file".into()]);
+            let chars: Vec<char> = text.chars().collect();
+            let mut pieces = Vec::new();
+            for chunk in chars.chunks(step) {
+                pieces.extend(f.push(&chunk.iter().collect::<String>()));
+            }
+            pieces.extend(f.finish());
+            let shown: String = pieces
+                .iter()
+                .filter_map(|p| match p {
+                    Piece::Text(t) => Some(t.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(shown, "Sure.\n");
+            let calls: Vec<&ToolCall> = pieces
+                .iter()
+                .filter_map(|p| match p {
+                    Piece::Call(c) => Some(c),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].arguments, json!({"path": "/a.txt"}));
+        }
+        // So does a bare JSON object opening the answer.
+        let mut f = ToolCallFilter::offering(vec!["ask_user".into()]);
+        let mut pieces = Vec::new();
+        for ch in "{\"name\": \"ask_user\", \"arguments\": {\"question\": \"Again?\"}} Ok".chars() {
+            pieces.extend(f.push(&ch.to_string()));
+        }
+        pieces.extend(f.finish());
+        assert!(matches!(&pieces[0], Piece::Call(c) if c.name == "ask_user"));
+        let rest: String = pieces[1..]
+            .iter()
+            .map(|p| match p {
+                Piece::Text(t) => t.clone(),
+                Piece::Call(_) => panic!("one call"),
+            })
+            .collect();
+        assert_eq!(rest, " Ok");
+        // JSON the person asked for is passed on.
+        let mut f = ToolCallFilter::offering(vec!["read_file".into()]);
+        let mut pieces = f.push("{\"a\": 1}");
+        pieces.extend(f.finish());
+        assert_eq!(pieces, vec![Piece::Text("{\"a\": 1}".into())]);
+
+        // Other JSON stays a code block, and without offered tools nothing
+        // is held back.
+        let code = "Here:\n```json\n{\"name\": \"x\", \"arguments\": {}}\n```\nDone.";
+        let mut f = ToolCallFilter::offering(vec!["read_file".into()]);
+        let mut pieces = f.push(code);
+        pieces.extend(f.finish());
+        let shown: String = pieces
+            .iter()
+            .map(|p| match p {
+                Piece::Text(t) => t.clone(),
+                Piece::Call(_) => panic!("not a call"),
+            })
+            .collect();
+        assert_eq!(shown, code);
+        assert_eq!(run(code, 3), (code.to_string(), vec![]));
     }
 
     #[test]

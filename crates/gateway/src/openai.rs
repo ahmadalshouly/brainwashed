@@ -23,7 +23,7 @@ use axum::{
     Json,
 };
 use brainwashed_core::{
-    Attachment, ChatEvent, ChatMessage, Engine, Role, SamplingOptions, LOCAL_MODEL,
+    Attachment, ChatAccess, ChatEvent, ChatMessage, Engine, Role, SamplingOptions, LOCAL_MODEL,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -443,8 +443,12 @@ pub(crate) async fn chat_completions(
                 &messages,
                 &options,
                 Some(&task_model),
-                admin,
-                false,
+                // Scripts bring their own tools; the host's aren't offered.
+                ChatAccess {
+                    admin,
+                    ask_user: false,
+                    tools: false,
+                },
                 move |e| {
                     progress.lock().unwrap().see(&e, started);
                     let _ = events.send(Piece::Event(e));

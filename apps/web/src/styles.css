@@ -1118,6 +1118,48 @@ select:focus {
   flex: 1;
 }
 
+.mcp-server {
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+
+.mcp-server .grow {
+  flex: 1;
+}
+
+.mcp-server .actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.wrap-anywhere {
+  overflow-wrap: anywhere;
+}
+
+.mcp-error {
+  color: var(--danger);
+  font-size: 0.88em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.mcp-tools ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.mcp-tools li {
+  margin: 2px 0;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto;
+  gap: 8px;
+}
+
 @media (max-width: 760px) {
   .provider {
     flex-direction: column;

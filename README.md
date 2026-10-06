@@ -4,7 +4,7 @@
 
 Turn your laptop into a private AI server, and use it from your phone or any browser, anywhere.
 
-BrainWashed is one command, `brainwashed`. It runs open source language models on your own computer (macOS, Windows, Linux), lets you teach it new abilities by dropping in a markdown **skill** file, and serves a web app: chat for everyone, and admin pages to manage models, skills, devices, remote access and settings. Chats take pictures, PDFs and documents. Admins set thinking, temperature and reply length for everyone in Settings, and each chat can change them for itself. When a local model isn't enough, admins can connect OpenAI, Anthropic, Gemini, OpenRouter or any OpenAI-compatible provider with their own API key. An OpenAI-compatible API lets scripts and other apps use the same models. A built-in secure tunnel makes it reachable from anywhere with no router setup. Optional iOS/Android apps connect to the same host. Your conversations stay end-to-end encrypted between your devices and hardware you own.
+BrainWashed is one command, `brainwashed`. It runs open source language models on your own computer (macOS, Windows, Linux), lets you teach it new abilities by dropping in a markdown **skill** file, and serves a web app: chat for everyone, and admin pages to manage models, skills, devices, remote access and settings. Chats take pictures, PDFs and documents. Admins set thinking, temperature and reply length for everyone in Settings, and each chat can change them for itself. Admins can add MCP servers so models can use tools, like reading files or fetching web pages. When a local model isn't enough, admins can connect OpenAI, Anthropic, Gemini, OpenRouter or any OpenAI-compatible provider with their own API key. An OpenAI-compatible API lets scripts and other apps use the same models. A built-in secure tunnel makes it reachable from anywhere with no router setup. Optional iOS/Android apps connect to the same host. Your conversations stay end-to-end encrypted between your devices and hardware you own.
 
 > **Support BrainWashed:** [donate through PayPal](https://www.paypal.com/pool/9tf5FyKDzU).
 
@@ -87,6 +87,12 @@ You always see the whole skill before it's installed, along with anything that l
 ## Cloud models
 
 Open **Cloud models** on the admin page, pick a provider (OpenAI, Anthropic, Google Gemini, OpenRouter, Groq, Mistral, DeepSeek, xAI, Together, Ollama on another machine, or any OpenAI-compatible API), paste an API key and choose which models to offer. They appear in the chat's model menu next to the local model. The key stays on your computer in `providers.json` and is never sent to devices; messages to a cloud model do leave your computer, and the chat says so whenever one is picked. Admins decide whether members may use each provider.
+
+## Tools (MCP servers)
+
+Models can use tools from [MCP servers](https://modelcontextprotocol.io): read and write files, fetch web pages, search, call APIs, anything an MCP server offers. Open **Tools** on the admin page and add a server as a command this computer runs (for example `npx -y @modelcontextprotocol/server-filesystem ~/Documents`, or `uvx mcp-server-fetch`) or as an address it reaches over HTTP (for example `https://example.org/mcp`, with headers such as `Authorization` if it needs a token). You can also paste the `mcpServers` JSON a server's instructions give for Claude Desktop or Cursor.
+
+Each server has an on/off switch, and only admins' chats use it unless you share it with members. When a model that supports tools (its chat template says so, and cloud models do) calls one, BrainWashed runs it, hands the result back and lets the model carry on; the chat shows each call and what it returned. Servers are kept in `mcp.json`, readable only by your user. A command server runs with your account's access, so add only servers you trust. Small local models are hit-and-miss with tools; 7B and larger, or cloud models, do much better. The OpenAI-compatible API doesn't offer these tools: scripts bring their own.
 
 ## API
 

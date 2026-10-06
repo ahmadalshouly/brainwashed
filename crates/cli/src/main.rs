@@ -384,6 +384,7 @@ async fn serve(engine: Engine, data_dir: &Path, args: &Args) -> Result {
         format!("couldn't serve on port {port} ({e}). Is another program using it? Pass --port.")
     })?;
     let watcher = engine.watch_skills(Duration::from_secs(2));
+    engine.start_mcp_servers();
 
     // The model loads in the background so the admin page opens right away
     // and shows the progress.
@@ -426,6 +427,7 @@ async fn serve(engine: Engine, data_dir: &Path, args: &Args) -> Result {
     loader.abort();
     watcher.abort();
     gateway.stop();
+    engine.stop_mcp_servers().await;
     engine.unload().await?;
     Ok(())
 }
@@ -853,6 +855,7 @@ async fn chat(engine: Engine) -> Result {
         model.name
     );
 
+    engine.start_mcp_servers();
     let mut conversation: Vec<ChatMessage> = Vec::new();
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     loop {
@@ -882,6 +885,7 @@ async fn chat(engine: Engine) -> Result {
         let mut thinking = false;
         let mut asked = None;
         let written = std::cell::RefCell::new(String::new());
+        let unanswered = std::cell::RefCell::new(Vec::new());
         let options = SamplingOptions::default();
         let reply = engine.chat(&conversation, &options, |event| {
             match event {
@@ -904,13 +908,18 @@ async fn chat(engine: Engine) -> Result {
                     }
                     asked = Some(ask.text());
                 }
-                ChatEvent::ToolCall(call) if call.name.is_empty() => {
-                    print!("\n(the model tried to use a tool BrainWashed doesn't have)")
+                // Calls of MCP tools run and their result follows; any other
+                // call is reported once the answer ends.
+                ChatEvent::ToolCall(call) => unanswered.borrow_mut().push(call),
+                ChatEvent::ToolResult(result) => {
+                    unanswered.borrow_mut().retain(|c| c.id != result.id);
+                    let first = result.content.lines().next().unwrap_or_default();
+                    if result.is_error {
+                        print!("\n(used {}: it failed: {first})\n", result.name);
+                    } else {
+                        print!("\n(used {})\n", result.name);
+                    }
                 }
-                ChatEvent::ToolCall(call) => print!(
-                    "\n(the model tried to use the tool {}, which BrainWashed doesn't have)",
-                    call.name
-                ),
                 _ => {}
             }
             let _ = std::io::stdout().flush();
@@ -923,6 +932,16 @@ async fn chat(engine: Engine) -> Result {
                 written.take()
             }
         };
+        for call in unanswered.take() {
+            if call.name.is_empty() {
+                print!("\n(the model tried to use a tool BrainWashed doesn't have)");
+            } else {
+                print!(
+                    "\n(the model tried to use the tool {}, which BrainWashed doesn't have)",
+                    call.name
+                );
+            }
+        }
         println!("\n");
         // The question stays in the history, so the reply makes sense.
         if let Some(ask) = asked {
@@ -933,6 +952,7 @@ async fn chat(engine: Engine) -> Result {
         }
         conversation.push(ChatMessage::new(Role::Assistant, answer));
     }
+    engine.stop_mcp_servers().await;
     engine.unload().await?;
     Ok(())
 }

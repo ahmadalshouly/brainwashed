@@ -107,6 +107,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @brainwashed/web build
       - run: cargo build --release --locked -p brainwashed-cli
+      # Starting MCP servers as commands differs per platform (Windows
+      # finds .cmd scripts like npx itself).
+      - run: cargo test --locked -p brainwashed-mcp
       - name: Smoke test
         shell: bash
         run: |

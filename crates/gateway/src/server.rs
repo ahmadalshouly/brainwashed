@@ -15,7 +15,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use brainwashed_core::{ChatEvent, ChatMessage, Engine, Event, RemoteAccess, SamplingOptions};
+use brainwashed_core::{
+    ChatAccess, ChatEvent, ChatMessage, Engine, Event, RemoteAccess, SamplingOptions,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -783,7 +785,8 @@ async fn rpc(State(gw): State<Gateway>, Json(req): Json<RpcRequest>) -> Response
 }
 
 /// One encrypted JSON frame per line: `{"event":…}` while streaming, then
-/// `{"done":"full answer"}` (with `toolCalls` when the model made any) or
+/// `{"done":"full answer"}` (with `toolCalls` when the model made any, and
+/// `toolResults` when tools ran) or
 /// `{"error":"…"}`.
 ///
 /// With a `replyId`, the answer keeps being written when the phone
@@ -828,15 +831,21 @@ fn chat(
         let seen = calls.clone();
         let text = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
         let written = text.clone();
+        let results = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let ran = results.clone();
         let answer = engine.chat_with(
             &messages,
             &options,
             model.as_deref(),
-            admin,
-            true,
+            ChatAccess {
+                admin,
+                ask_user: true,
+                tools: true,
+            },
             move |e: ChatEvent| {
                 match &e {
                     ChatEvent::ToolCall(c) => seen.lock().unwrap().push(c.clone()),
+                    ChatEvent::ToolResult(r) => ran.lock().unwrap().push(r.clone()),
                     ChatEvent::Content { text } => written.lock().unwrap().push_str(text),
                     _ => {}
                 }
@@ -850,6 +859,7 @@ fn chat(
             _ = writer.stopped() => (Ok(std::mem::take(&mut *text.lock().unwrap())), true),
         };
         let calls = std::mem::take(&mut *calls.lock().unwrap());
+        let results = std::mem::take(&mut *results.lock().unwrap());
         let mut frame = match result {
             Ok(answer) => json!({ "done": answer }),
             Err(e) => json!({ "error": e.to_string() }),
@@ -857,6 +867,9 @@ fn chat(
         // Tool calls ride along so a stored chat can keep them.
         if !calls.is_empty() && frame.get("done").is_some() {
             frame["toolCalls"] = json!(calls);
+            if !results.is_empty() {
+                frame["toolResults"] = json!(results);
+            }
         }
         if stopped {
             frame["stopped"] = json!(true);

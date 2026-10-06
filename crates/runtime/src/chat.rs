@@ -4,6 +4,7 @@ use crate::toolcalls::{ask_user_tool, Piece, ToolCall, ToolCallFilter};
 use crate::{Error, Result};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -11,6 +12,8 @@ pub enum Role {
     System,
     User,
     Assistant,
+    /// A tool's result, answering an assistant message's tool call.
+    Tool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,6 +23,17 @@ pub struct ChatMessage {
     /// Pictures and documents sent with the message.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
+    /// Tools an assistant message called; their results follow as
+    /// [`Role::Tool`] messages.
+    #[serde(default, rename = "toolCalls", skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
+    /// For [`Role::Tool`] messages: the call this is the result of.
+    #[serde(
+        default,
+        rename = "toolCallId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tool_call_id: Option<String>,
 }
 
 impl ChatMessage {
@@ -28,6 +42,24 @@ impl ChatMessage {
             role,
             content: content.into(),
             attachments: Vec::new(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+        }
+    }
+
+    /// An assistant message that called tools.
+    pub fn calling(content: impl Into<String>, calls: Vec<ToolCall>) -> Self {
+        ChatMessage {
+            tool_calls: calls,
+            ..ChatMessage::new(Role::Assistant, content)
+        }
+    }
+
+    /// A tool's result for the call `id`.
+    pub fn tool_result(id: impl Into<String>, content: impl Into<String>) -> Self {
+        ChatMessage {
+            tool_call_id: Some(id.into()),
+            ..ChatMessage::new(Role::Tool, content)
         }
     }
 
@@ -64,6 +96,41 @@ impl ChatMessage {
     /// The message as llama-server's OpenAI API takes it. Pictures become
     /// image parts, which need a model with a vision projector.
     fn to_wire(&self, with_images: bool) -> serde_json::Value {
+        if self.role == Role::Tool {
+            return json!({
+                "role": "tool",
+                "tool_call_id": wire_id(self.tool_call_id.as_deref().unwrap_or_default()),
+                "content": self.content,
+            });
+        }
+        if !self.tool_calls.is_empty() {
+            let calls: Vec<serde_json::Value> = self
+                .tool_calls
+                .iter()
+                .map(|c| {
+                    json!({
+                        "id": wire_id(&c.id),
+                        "type": "function",
+                        "function": {
+                            "name": c.name,
+                            // OpenAI's format: the arguments as a JSON string.
+                            "arguments": match &c.arguments {
+                                serde_json::Value::Null => "{}".to_string(),
+                                v => v.to_string(),
+                            },
+                        },
+                    })
+                })
+                .collect();
+            // Some providers refuse an empty text next to tool calls.
+            let text = self.text();
+            let content = if text.trim().is_empty() {
+                serde_json::Value::Null
+            } else {
+                text.into()
+            };
+            return json!({ "role": self.role, "content": content, "tool_calls": calls });
+        }
         let images: Vec<&Attachment> = if with_images {
             self.images().collect()
         } else {
@@ -84,6 +151,42 @@ impl ChatMessage {
         parts.push(serde_json::json!({ "type": "text", "text": self.text_with(false) }));
         serde_json::json!({ "role": self.role, "content": parts })
     }
+}
+
+/// A tool call id as chat templates accept it. Mistral's insist on nine
+/// letters and digits, so `call_12` goes out as `call00012`.
+fn wire_id(id: &str) -> String {
+    match id.strip_prefix("call_").and_then(|n| n.parse::<u32>().ok()) {
+        Some(n) if n < 100_000 => format!("call{n:05}"),
+        _ => {
+            let clean: String = id.chars().filter(char::is_ascii_alphanumeric).collect();
+            format!("{clean:0>9}").chars().take(9).collect()
+        }
+    }
+}
+
+/// Folds tool calls and results out of a conversation, for models and
+/// providers that aren't offered tools: they keep the assistant's words and
+/// lose the calls, so templates that know nothing of tools don't choke.
+pub fn without_tools(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    let mut out: Vec<ChatMessage> = Vec::with_capacity(messages.len());
+    for m in messages {
+        if m.role == Role::Tool {
+            continue;
+        }
+        let mut m = m.clone();
+        m.tool_calls.clear();
+        if m.role == Role::Assistant && m.content.trim().is_empty() && m.attachments.is_empty() {
+            continue;
+        }
+        match out.last_mut() {
+            Some(prev) if prev.role == Role::Assistant && m.role == Role::Assistant => {
+                prev.content = format!("{}\n\n{}", prev.content.trim_end(), m.content.trim_start());
+            }
+            _ => out.push(m),
+        }
+    }
+    out
 }
 
 /// Something sent along with a message.
@@ -228,9 +331,8 @@ pub enum Delta {
     Content(String),
     /// Part of a reasoning model's thinking, shown separately.
     Reasoning(String),
-    /// A tool call the model made. BrainWashed offers no tools, so these
-    /// are shown, not run. Calls that only ask the person a question come
-    /// as [`Delta::Content`] instead.
+    /// A tool call the model made. Calls of `ask_user` carry the question
+    /// and its options.
     ToolCall(ToolCall),
     /// Sent once at the end.
     Stats(ReplyStats),
@@ -299,6 +401,10 @@ pub struct Endpoint {
     /// Offer the model the `ask_user` tool, so it can ask the person to
     /// pick an option. Only for models whose chat template knows tools.
     pub ask_user: bool,
+    /// More tools to offer, in OpenAI's `tools` format.
+    pub tools: Vec<serde_json::Value>,
+    /// Offer the tools but don't let the model call them, so it answers.
+    pub no_more_calls: bool,
 }
 
 impl Endpoint {
@@ -309,7 +415,14 @@ impl Endpoint {
             model: None,
             llama: true,
             ask_user: false,
+            tools: Vec::new(),
+            no_more_calls: false,
         }
+    }
+
+    /// Whether the request offers the model any tools.
+    pub fn offers_tools(&self) -> bool {
+        self.ask_user || !self.tools.is_empty()
     }
 
     fn url(&self, path: &str) -> String {
@@ -407,9 +520,45 @@ pub async fn stream_chat(
     messages: &[ChatMessage],
     sampling: &SamplingOptions,
     vision: bool,
-    mut on_delta: impl FnMut(Delta),
+    on_delta: impl FnMut(Delta),
 ) -> Result<String> {
+    Ok(
+        stream_turn(client, endpoint, messages, sampling, vision, 0, on_delta)
+            .await?
+            .answer,
+    )
+}
+
+/// One reply from the model, as [`stream_turn`] returns it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Turn {
+    /// The visible answer.
+    pub answer: String,
+    /// The tools it called, also passed on as [`Delta::ToolCall`].
+    pub calls: Vec<ToolCall>,
+    /// It asked the person something (`ask_user`); the reply ends there.
+    pub asked: bool,
+}
+
+/// Like [`stream_chat`], returning the tool calls too. Calls are numbered
+/// from `first_call`, so the replies of one tool loop don't reuse ids.
+pub async fn stream_turn(
+    client: &reqwest::Client,
+    endpoint: &Endpoint,
+    messages: &[ChatMessage],
+    sampling: &SamplingOptions,
+    vision: bool,
+    first_call: usize,
+    mut on_delta: impl FnMut(Delta),
+) -> Result<Turn> {
     let mut body = sampling.to_params(endpoint.llama);
+    let flat;
+    let messages = if endpoint.offers_tools() {
+        messages
+    } else {
+        flat = without_tools(messages);
+        &flat
+    };
     body.insert(
         "messages".into(),
         messages.iter().map(|m| m.to_wire(vision)).collect(),
@@ -418,8 +567,15 @@ pub async fn stream_chat(
     if let Some(model) = &endpoint.model {
         body.insert("model".into(), model.clone().into());
     }
-    if endpoint.ask_user {
-        body.insert("tools".into(), serde_json::json!([ask_user_tool()]));
+    if endpoint.offers_tools() {
+        let mut tools = endpoint.tools.clone();
+        if endpoint.ask_user {
+            tools.insert(0, ask_user_tool());
+        }
+        body.insert("tools".into(), tools.into());
+        if endpoint.no_more_calls {
+            body.insert("tool_choice".into(), "none".into());
+        }
     }
     if !endpoint.llama {
         // Token counts for the stats, since providers send no timings.
@@ -453,9 +609,22 @@ pub async fn stream_chat(
     let mut stats = ReplyStats::default();
     let mut first_token: Option<std::time::Instant> = None;
     let mut parser = SseParser::default();
-    let mut filter = ToolCallFilter::default();
+    // Names of the tools offered, so calls small models write as plain
+    // JSON are recognised.
+    let mut offered: Vec<String> = endpoint
+        .tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str().map(str::to_string))
+        .collect();
+    if endpoint.ask_user {
+        offered.push("ask_user".into());
+    }
+    let mut filter = ToolCallFilter::offering(offered);
     let mut native: Vec<(String, String)> = Vec::new();
-    let mut out = Emitted::default();
+    let mut out = Emitted {
+        calls: first_call,
+        ..Default::default()
+    };
     let mut stream = res.bytes_stream();
     'read: while let Some(bytes) = stream.next().await {
         for data in parser.push(&bytes?) {
@@ -519,14 +688,20 @@ pub async fn stream_chat(
         emit(Piece::Call(call), &mut out, &mut on_delta);
     }
     on_delta(Delta::Stats(stats));
-    Ok(out.answer)
+    Ok(Turn {
+        answer: out.answer,
+        calls: out.made,
+        asked: out.asked,
+    })
 }
 
 /// What has been passed on so far.
 #[derive(Default)]
 struct Emitted {
     answer: String,
+    /// The number the next call gets.
     calls: usize,
+    made: Vec<ToolCall>,
     /// The model asked the person something; the reply ends there.
     asked: bool,
 }
@@ -553,6 +728,7 @@ fn emit(piece: Piece, out: &mut Emitted, on_delta: &mut impl FnMut(Delta)) {
         call.name = "ask_user".into();
         call.arguments = serde_json::json!({ "question": ask.question, "options": ask.options });
     }
+    out.made.push(call.clone());
     on_delta(Delta::ToolCall(call));
 }
 

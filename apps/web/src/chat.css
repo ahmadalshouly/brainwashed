@@ -1024,6 +1024,23 @@
   margin: 0 0 8px;
 }
 
+.tool-call-body pre + .tool-label {
+  margin-top: 10px;
+}
+
+.tool-label {
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.tool-server {
+  color: var(--ink-3);
+}
+
+.tool-call.failed summary {
+  color: var(--danger, #c62828);
+}
+
 .tool-call-body pre {
   margin: 0;
   padding: 8px 10px;

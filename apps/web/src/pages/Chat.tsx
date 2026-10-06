@@ -7,6 +7,7 @@ import {
   type InstalledModel,
   type ToolCall,
 } from "@brainwashed/api";
+import type { ShownCall } from "../chatstore";
 import { Markdown } from "../markdown";
 import { Icon, type IconName } from "../icons";
 import {
@@ -102,6 +103,85 @@ function askOf(c: ToolCall): { question: string; options: string[] } | null {
   return { question: a.question, options };
 }
 
+/**
+ * An answer's text split where it called tools, with the calls in between.
+ * Questions for the person (`ask_user`) are shown after the answer instead.
+ */
+function answerPieces(t: Turn): (string | ShownCall)[] {
+  const calls = (t.toolCalls ?? [])
+    .filter((c) => !askOf(c))
+    .map((c) => ({ ...c, at: Math.min(c.at ?? t.content.length, t.content.length) }))
+    .sort((a, b) => a.at - b.at);
+  const out: (string | ShownCall)[] = [];
+  let from = 0;
+  for (const c of calls) {
+    const text = t.content.slice(from, c.at);
+    if (text.trim()) out.push(text);
+    out.push(c);
+    from = c.at;
+  }
+  const rest = t.content.slice(from);
+  if (rest.trim()) out.push(rest);
+  return out;
+}
+
+/** Whether a reply being written has nothing new to show yet. */
+function waiting(t: Turn): boolean {
+  const pieces = answerPieces(t);
+  const last = pieces[pieces.length - 1];
+  if (last === undefined) return !t.reasoning;
+  // Back from a tool, before the model says more.
+  return typeof last !== "string" && !!last.result;
+}
+
+/** A tool the model used: what it asked and what came back. */
+function ToolCard({ call: c, running }: { call: ShownCall; running: boolean }) {
+  const r = c.result;
+  const name = c.name ? <code>{c.name}</code> : "a tool";
+  return (
+    <details className={`tool-call ${r?.isError ? "failed" : ""}`}>
+      <summary>
+        <Icon name="wrench" size={14} />
+        {r ? (
+          <span>
+            {r.isError ? "Couldn't use " : "Used "}
+            {name}
+            {r.server && <span className="tool-server"> · {r.server}</span>}
+          </span>
+        ) : running ? (
+          <span className="shimmer">
+            Using {c.name || "a tool"}…
+          </span>
+        ) : (
+          <span>Tried to use {name}</span>
+        )}
+        <Icon name="chevronDown" size={14} />
+      </summary>
+      <div className="tool-call-body">
+        {!r && !running && (
+          <p>
+            BrainWashed doesn't have this tool, so nothing ran. Admins can add
+            tools on the Tools page.
+          </p>
+        )}
+        {c.raw !== undefined ||
+        (c.arguments && typeof c.arguments === "object" && Object.keys(c.arguments).length) ? (
+          <>
+            <p className="tool-label">Asked with</p>
+            <pre>{c.raw ?? JSON.stringify(c.arguments, null, 2)}</pre>
+          </>
+        ) : null}
+        {r && (
+          <>
+            <p className="tool-label">{r.isError ? "What went wrong" : "Got back"}</p>
+            <pre>{r.content || "(nothing)"}</pre>
+          </>
+        )}
+      </div>
+    </details>
+  );
+}
+
 /** A turn's text with any question it asked, so the model sees what was asked. */
 function fullText(t: Turn): string {
   const asks = (t.toolCalls ?? []).map(askOf).filter((a) => a !== null);
@@ -115,12 +195,35 @@ function fullText(t: Turn): string {
     .join("\n\n");
 }
 
-/** Messages as the model gets them: no errors, no UI-only fields. */
+/**
+ * Messages as the model gets them: no errors, no UI-only fields. Tools that
+ * ran go first as calls and their results, so the model remembers them.
+ */
 function wire(turns: Turn[], instructions?: string): ChatMessage[] {
   const out: ChatMessage[] = [];
   if (instructions?.trim())
     out.push({ role: "system", content: instructions.trim() });
   for (const t of turns) {
+    const ran = (t.toolCalls ?? []).filter((c) => c.result);
+    if (t.role === "assistant" && ran.length) {
+      out.push({
+        role: "assistant",
+        content: "",
+        toolCalls: ran.map(({ id, name, arguments: args }) => ({
+          id,
+          name,
+          arguments: args,
+        })),
+      });
+      for (const c of ran)
+        out.push({
+          role: "tool",
+          toolCallId: c.id,
+          content: c.result!.isError
+            ? `Error: ${c.result!.content}`
+            : c.result!.content,
+        });
+    }
     const content = fullText(t);
     if (t.error && !content) continue;
     if (!content && !t.attachments?.length) continue;
@@ -366,7 +469,22 @@ export function ChatPage({
                 return { ...t, content: t.content + e.text };
               case "tool_call": {
                 const { kind: _, ...call } = e;
-                return { ...t, toolCalls: [...(t.toolCalls ?? []), call] };
+                return {
+                  ...t,
+                  toolCalls: [
+                    ...(t.toolCalls ?? []),
+                    { ...call, at: t.content.length },
+                  ],
+                };
+              }
+              case "tool_result": {
+                const { kind: _, ...result } = e;
+                return {
+                  ...t,
+                  toolCalls: (t.toolCalls ?? []).map((c) =>
+                    c.id === result.id ? { ...c, result } : c,
+                  ),
+                };
               }
               case "stats": {
                 const { kind: _, ...stats } = e;
@@ -1232,9 +1350,18 @@ export function ChatPage({
                           <div className="thought-body">{t.reasoning}</div>
                         </details>
                       )}
-                      {t.content ? (
-                        <Markdown text={t.content} />
-                      ) : busy && i === turns.length - 1 && !t.reasoning ? (
+                      {answerPieces(t).map((p, k) =>
+                        typeof p === "string" ? (
+                          <Markdown key={k} text={p} />
+                        ) : (
+                          <ToolCard
+                            key={k}
+                            call={p}
+                            running={busy && i === turns.length - 1}
+                          />
+                        ),
+                      )}
+                      {busy && i === turns.length - 1 && waiting(t) ? (
                         <span className="typing">
                           <i />
                           <i />
@@ -1243,50 +1370,26 @@ export function ChatPage({
                       ) : null}
                       {t.toolCalls?.map((c, k) => {
                         const ask = askOf(c);
-                        if (ask)
-                          return (
-                            <div key={k} className="ask">
-                              <Markdown text={ask.question} />
-                              {ask.options.length > 0 && (
-                                <div className="ask-options">
-                                  {ask.options.map((o) => (
-                                    <button
-                                      key={o}
-                                      disabled={
-                                        i !== turns.length - 1 || !ready || busy
-                                      }
-                                      onClick={() => send(o)}
-                                    >
-                                      {o}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
+                        if (!ask) return null;
                         return (
-                          <details key={k} className="tool-call">
-                            <summary>
-                              <Icon name="wrench" size={14} />
-                              {c.name ? (
-                                <span>
-                                  Tried to use <code>{c.name}</code>
-                                </span>
-                              ) : (
-                                <span>Tried to use a tool</span>
-                              )}
-                              <Icon name="chevronDown" size={14} />
-                            </summary>
-                            <div className="tool-call-body">
-                              <p>
-                                This model is trained to use tools, but
-                                BrainWashed doesn't give it any, so nothing ran.
-                              </p>
-                              <pre>
-                                {c.raw ?? JSON.stringify(c.arguments, null, 2)}
-                              </pre>
-                            </div>
-                          </details>
+                          <div key={k} className="ask">
+                            <Markdown text={ask.question} />
+                            {ask.options.length > 0 && (
+                              <div className="ask-options">
+                                {ask.options.map((o) => (
+                                  <button
+                                    key={o}
+                                    disabled={
+                                      i !== turns.length - 1 || !ready || busy
+                                    }
+                                    onClick={() => send(o)}
+                                  >
+                                    {o}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         );
                       })}
                       {t.error && (

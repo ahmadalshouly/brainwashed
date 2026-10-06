@@ -1,12 +1,21 @@
 /** Shared wire types between the host gateway, the host UI and the mobile app. */
 
-export type Role = "system" | "user" | "assistant";
+export type Role = "system" | "user" | "assistant" | "tool";
 
+/** Mirrors `ChatMessage` in crates/runtime. */
 export interface ChatMessage {
   role: Role;
   content: string;
   /** Pictures and documents sent with the message. */
   attachments?: Attachment[];
+  /**
+   * Tools an assistant message called. Their results follow as "tool"
+   * messages, so the model remembers what its tools returned. Hosts before
+   * MCP support ignore both fields.
+   */
+  toolCalls?: ToolCall[];
+  /** For "tool" messages: the id of the call this is the result of. */
+  toolCallId?: string;
 }
 
 /**
@@ -186,13 +195,15 @@ export type ChatEvent =
   | { kind: "content"; text: string }
   | { kind: "reasoning"; text: string }
   | ({ kind: "tool_call" } & ToolCall)
+  | ({ kind: "tool_result" } & ToolResult)
   | ({ kind: "stats" } & ReplyStats);
 
 /**
- * A tool the model called. The one BrainWashed offers is `ask_user`, with
- * arguments `{ question: string, options: string[] }`: show the question
- * and let the person tap an option, sent back as an ordinary user message.
- * Any other call is shown, never run. Mirrors `ToolCall` in crates/runtime.
+ * A tool the model called. `ask_user` has arguments `{ question: string,
+ * options: string[] }`: show the question and let the person tap an option,
+ * sent back as an ordinary user message. Calls of an MCP server's tools run
+ * on the host, and a `tool_result` with the same id follows. Any other call
+ * is only shown. Mirrors `ToolCall` in crates/runtime.
  */
 export interface ToolCall {
   /** "call_0", "call_1"... in the order the reply made them. */
@@ -202,6 +213,67 @@ export interface ToolCall {
   /** Named arguments; positional ones are under "0", "1"... */
   arguments: unknown;
   raw?: string;
+}
+
+/** What a tool returned, after its `tool_call`. Mirrors `ToolResult` in crates/core. */
+export interface ToolResult {
+  /** The id of the call this answers. */
+  id: string;
+  name: string;
+  /** Name of the MCP server that ran it; empty if none did. */
+  server: string;
+  /** What the model read, cut to fit its context. */
+  content: string;
+  /** The tool failed, or there was no such tool. */
+  isError: boolean;
+}
+
+/** How an MCP server is reached. Mirrors `Transport` in crates/mcp. */
+export type McpTransport =
+  | {
+      type: "stdio";
+      /** e.g. "npx", "uvx", or a full path. */
+      command: string;
+      args: string[];
+      /** Added to the host's environment. */
+      env: Record<string, string>;
+      cwd?: string;
+    }
+  | {
+      type: "http";
+      /** e.g. "https://example.org/mcp". */
+      url: string;
+      /** Sent with every request, e.g. Authorization. */
+      headers: Record<string, string>;
+    };
+
+/** An MCP server whose tools models can use. Mirrors `McpServer` in crates/core. */
+export interface McpServer {
+  /** Letters, numbers, - or _. */
+  id: string;
+  name: string;
+  /** Off: not started, and its tools aren't offered. */
+  enabled: boolean;
+  /** Members' chats may use it too, not only admins'. */
+  members: boolean;
+  transport: McpTransport;
+}
+
+/** Mirrors `McpStatus` in crates/core. */
+export type McpStatus =
+  | { state: "off" }
+  | { state: "starting" }
+  | { state: "ready" }
+  | { state: "error"; message: string };
+
+/** An MCP server as admins see it. Mirrors `McpServerInfo` in crates/core. */
+export interface McpServerInfo extends McpServer {
+  status: McpStatus;
+  tools: { name: string; description: string }[];
+  /** The name and version the server gave. */
+  serverInfo: string | null;
+  /** The last lines a command server wrote to stderr. */
+  log: string[];
 }
 
 /** Mirrors `EngineState` in crates/core. */
@@ -248,7 +320,8 @@ export type EngineEvent =
   | { type: "downloadFinished"; repo: string; model: InstalledModel }
   | { type: "downloadFailed"; repo: string; error: string }
   | { type: "modelsChanged" }
-  | { type: "skillsChanged" };
+  | { type: "skillsChanged" }
+  | { type: "toolsChanged" };
 
 /** Admins manage the host; members chat. Mirrors `DeviceRole` in crates/gateway. */
 export type DeviceRole = "admin" | "member";

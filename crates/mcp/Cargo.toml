@@ -1,0 +1,28 @@
+[package]
+name = "brainwashed-mcp"
+version = "0.0.0"
+description = "A small Model Context Protocol client, so BrainWashed models can use the tools of MCP servers."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+futures-util = "0.3"
+reqwest = { version = "0.13", features = ["json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["net"] }
+
+# Used by the tests only.
+[[bin]]
+name = "mcp-test-server"
+path = "test-server/main.rs"
+test = false
+doctest = false
