@@ -609,7 +609,17 @@ pub async fn stream_turn(
     let mut stats = ReplyStats::default();
     let mut first_token: Option<std::time::Instant> = None;
     let mut parser = SseParser::default();
-    let mut filter = ToolCallFilter::default();
+    // Names of the tools offered, so calls small models write as plain
+    // JSON are recognised.
+    let mut offered: Vec<String> = endpoint
+        .tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str().map(str::to_string))
+        .collect();
+    if endpoint.ask_user {
+        offered.push("ask_user".into());
+    }
+    let mut filter = ToolCallFilter::offering(offered);
     let mut native: Vec<(String, String)> = Vec::new();
     let mut out = Emitted {
         calls: first_call,
