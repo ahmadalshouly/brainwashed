@@ -1,3 +1,4 @@
+use crate::address_book::{self, AddressBookStatus, AddressKey, Publisher};
 use crate::api_keys::ApiKeyStore;
 use crate::audit::{AuditEntry, AuditLog};
 use crate::crypto::{self, Envelope, HostKeys};
@@ -73,6 +74,9 @@ pub struct GatewayStatus {
     /// Where devices reach this computer from anywhere: the configured
     /// public address, or the quick tunnel's address once it's connected.
     pub public_url: Option<String>,
+    /// Where devices look up the public address when the one they saved stops
+    /// answering, when the address book is on.
+    pub address_book: Option<AddressBookStatus>,
 }
 
 /// A model download in progress or just finished, for the admin page.
@@ -122,6 +126,11 @@ pub(crate) struct Inner {
     cloudflared: Mutex<Option<std::path::PathBuf>>,
     /// A stable public address set by the user.
     public_url: Mutex<Option<String>>,
+    /// The address book, this computer's secret for it, and the task that
+    /// keeps it up to date while the gateway runs.
+    book_url: Mutex<Option<String>>,
+    address_key: Mutex<AddressKey>,
+    publisher: Mutex<Option<Publisher>>,
     pub(crate) downloads: Mutex<Vec<DownloadStatus>>,
     /// Lets the `brainwashed` command on this computer talk to a running
     /// server. Written to `gateway/control.token`, readable only by this user.
@@ -160,6 +169,9 @@ impl Gateway {
                 tunnel: Mutex::new(None),
                 cloudflared: Mutex::new(None),
                 public_url: Mutex::new(None),
+                book_url: Mutex::new(None),
+                address_key: Mutex::new(AddressKey::load_or_create(&dir.join("address.key"))?),
+                publisher: Mutex::new(None),
                 downloads: Mutex::new(Vec::new()),
                 control_token: crypto::random_token(),
                 stop_requested: tokio::sync::Notify::new(),
@@ -193,6 +205,10 @@ impl Gateway {
         }
         if let Err(e) = self.set_public_url(settings.public_url.as_deref()) {
             problems.push(format!("public address: {e}"));
+        }
+        match address_book::book_url(settings.address_book.as_deref()) {
+            Ok(book) => self.set_address_book(book),
+            Err(e) => problems.push(format!("address book: {e}")),
         }
         let spec = match settings.remote_access {
             RemoteAccess::Off => None,
@@ -261,6 +277,84 @@ impl Gateway {
             .transpose()
             .map_err(|e| Error::Invalid(e.replace("relay address", "address")))?;
         *self.inner.public_url.lock().unwrap() = url;
+        self.poke_publisher();
+        Ok(())
+    }
+
+    /// Sets or clears the address book. While the gateway runs, it keeps this
+    /// computer's entry up to date.
+    pub fn set_address_book(&self, book: Option<String>) {
+        let changed = {
+            let mut current = self.inner.book_url.lock().unwrap();
+            let changed = *current != book;
+            *current = book;
+            changed
+        };
+        if changed {
+            self.restart_publisher();
+        }
+    }
+
+    fn restart_publisher(&self) {
+        let mut publisher = self.inner.publisher.lock().unwrap();
+        publisher.take();
+        let running = self.inner.running.lock().unwrap().is_some();
+        if let (true, Some(book)) = (running, self.inner.book_url.lock().unwrap().clone()) {
+            let inner = Arc::downgrade(&self.inner);
+            let current: address_book::CurrentAddress = Arc::new(move || {
+                inner
+                    .upgrade()
+                    .and_then(|inner| Gateway { inner }.public_url())
+            });
+            *publisher = Some(Publisher::start(
+                book,
+                self.inner.address_key.lock().unwrap().clone(),
+                current,
+            ));
+        }
+    }
+
+    fn poke_publisher(&self) {
+        if let Some(p) = self.inner.publisher.lock().unwrap().as_ref() {
+            p.poke();
+        }
+    }
+
+    /// Where devices look this computer up, when the address book is on.
+    pub fn address_book_status(&self) -> Option<AddressBookStatus> {
+        let book = self.inner.book_url.lock().unwrap().clone()?;
+        let status = self
+            .inner
+            .publisher
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|p| p.status());
+        Some(status.unwrap_or_else(|| {
+            AddressBookStatus::new(&book, &self.inner.address_key.lock().unwrap().id)
+        }))
+    }
+
+    /// Gives this computer a new address: a new secret for the address book,
+    /// so devices paired before can no longer look it up, and a new free
+    /// tunnel address. Devices need a new code from Devices afterwards.
+    pub async fn new_address(&self) -> Result<()> {
+        let path = self.inner.data_dir.join("gateway").join("address.key");
+        let old = std::mem::replace(
+            &mut *self.inner.address_key.lock().unwrap(),
+            AddressKey::create(&path)?,
+        );
+        self.restart_publisher();
+        if matches!(
+            *self.inner.tunnel_spec.lock().unwrap(),
+            Some(TunnelSpec::Quick)
+        ) {
+            self.restart_tunnel();
+        }
+        let book = self.inner.book_url.lock().unwrap().clone();
+        if let Some(book) = book {
+            address_book::forget(&book, &old).await;
+        }
         Ok(())
     }
 
@@ -329,6 +423,7 @@ impl Gateway {
         *self.inner.running.lock().unwrap() = Some(Running { addr, shutdown: tx });
         self.restart_relay();
         self.restart_tunnel();
+        self.restart_publisher();
         Ok(addr)
     }
 
@@ -339,6 +434,7 @@ impl Gateway {
         }
         self.inner.relay.lock().unwrap().take();
         self.inner.tunnel.lock().unwrap().take();
+        self.inner.publisher.lock().unwrap().take();
     }
 
     /// Sets or clears the relay that devices away from home connect
@@ -383,6 +479,7 @@ impl Gateway {
             relay: self.relay_status(),
             tunnel: self.tunnel_status(),
             public_url: self.public_url(),
+            address_book: self.address_book_status(),
         }
     }
 
@@ -440,6 +537,9 @@ impl Gateway {
         let public = self.public_url();
         if let Some(url) = public.as_deref() {
             query.push_str(&format!("&u={}", percent_encode(url)));
+        }
+        if let Some(book) = self.address_book_status() {
+            query.push_str(&format!("&b={}", percent_encode(&book.lookup)));
         }
         let lan_url = addresses
             .first()

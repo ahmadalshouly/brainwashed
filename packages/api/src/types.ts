@@ -409,6 +409,20 @@ export interface AccessStatus {
   tunnel: TunnelStatus | null;
   /** Where devices reach the host from anywhere, if anywhere. */
   publicUrl: string | null;
+  /** Where devices look up the public address after it changes, when the address book is on. */
+  addressBook: AddressBookStatus | null;
+}
+
+export interface AddressBookStatus {
+  /** The address book, e.g. https://book.example. */
+  book: string;
+  /** Where devices look up this computer's address. */
+  lookup: string;
+  /** A link that always opens this computer's current address. */
+  link: string;
+  /** The address the address book has, once posted. */
+  published: string | null;
+  error: string | null;
 }
 
 /** @deprecated Use AccessStatus. */
@@ -441,6 +455,8 @@ export interface HostSettings {
   tunnel_token_set: boolean;
   public_url: string | null;
   cloudflared_path: string | null;
+  /** Where this computer posts its address so devices find it after it changes. null uses the default, "off" turns it off. */
+  address_book: string | null;
   check_for_updates: boolean;
   /** Model settings for every chat, from every device. A chat's own options win. */
   chat_defaults: ChatOptions;

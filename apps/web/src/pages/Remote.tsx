@@ -8,7 +8,7 @@ const OPTIONS: { id: Mode; title: string; body: string }[] = [
   {
     id: "quick",
     title: "Free tunnel (recommended to start)",
-    body: "A free Cloudflare address with no account or router setup. The address changes each time BrainWashed starts, so devices need a new code after a restart.",
+    body: "A free Cloudflare address with no account or router setup. The address changes each time BrainWashed starts; paired devices find the new one through the address book.",
   },
   {
     id: "cloudflare",
@@ -33,6 +33,7 @@ export function RemotePage() {
   const [token, setToken] = useState("");
   const [url, setUrl] = useState("");
   const [relay, setRelay] = useState("");
+  const [book, setBook] = useState("");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -41,6 +42,7 @@ export function RemotePage() {
     setMode(s.remote_access === "off" && s.public_url ? "url" : s.remote_access);
     setUrl(s.public_url ?? "");
     setRelay(s.relay_url ?? "");
+    setBook(s.address_book ?? "");
   }, [settings.value]);
 
   async function save() {
@@ -49,6 +51,7 @@ export function RemotePage() {
       remote_access: mode === "url" ? "off" : mode,
       public_url: mode === "cloudflare" || mode === "url" ? url.trim() || null : null,
       relay_url: relay.trim() || null,
+      address_book: book.trim() || null,
     };
     if (mode === "cloudflare" && token.trim()) patch.tunnel_token = token.trim();
     const next = await action.run(() => remote.updateSettings(patch));
@@ -58,6 +61,17 @@ export function RemotePage() {
       setToken("");
       setSaved(true);
     }
+  }
+
+  async function newAddress() {
+    if (
+      !window.confirm(
+        "Get a new address? Devices paired before keep working on your network, but away from home they need a new code from Devices.",
+      )
+    )
+      return;
+    setSaved(false);
+    if (await action.run(() => remote.newAddress())) access.reload();
   }
 
   const a = access.value;
@@ -99,6 +113,33 @@ export function RemotePage() {
             Relay <span className="mono">{a.relay.url}</span>:{" "}
             {a.relay.connected ? <Badge kind="ok">connected</Badge> : <Badge kind="warn">{a.relay.error ?? "not connected"}</Badge>}
           </p>
+        )}
+        {a?.addressBook && (
+          <div className="address-book">
+            <p className="small">
+              {a.addressBook.error ? (
+                <Badge kind="warn">Address book: {a.addressBook.error}</Badge>
+              ) : a.addressBook.published ? (
+                <>
+                  <Badge kind="ok">Address book up to date</Badge> Paired devices find this computer even after its address
+                  changes.
+                </>
+              ) : (
+                <Badge>Address book: waiting for an address</Badge>
+              )}
+            </p>
+            <div className="row spread wrap">
+              <div className="small">
+                Permanent link for browsers: <span className="mono wrap-anywhere">{a.addressBook.link}</span>
+              </div>
+              <div className="row">
+                <CopyButton text={a.addressBook.link} />
+                <button disabled={action.busy} onClick={newAddress}>
+                  New address
+                </button>
+              </div>
+            </div>
+          </div>
         )}
         <p className="muted small">
           New devices get the remote address in their code. To connect a device, go to Devices and click Show code.
@@ -150,6 +191,15 @@ export function RemotePage() {
             traffic. See docs/relay.md.
           </p>
           <input placeholder="https://relay.example.org" value={relay} onChange={(e) => setRelay(e.target.value)} />
+        </details>
+        <details className="advanced">
+          <summary>Address book (advanced)</summary>
+          <p className="muted small">
+            Where this computer posts its current address so paired devices find it when the address changes. It only
+            learns the address, never your chats. Leave empty for the BrainWashed address book, enter your own (see
+            services/address-book), or type off.
+          </p>
+          <input placeholder="https://book.example.org or off" value={book} onChange={(e) => setBook(e.target.value)} />
         </details>
         <div className="row end">
           <button className="primary" disabled={action.busy} onClick={save}>

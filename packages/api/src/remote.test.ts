@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import nacl from "tweetnacl";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { parsePairingUrl, pairWithHost, RemoteHost, HostReplyError, type PairedHost } from "./remote";
+import { parsePairingUrl, pairWithHost, RemoteHost, HostReplyError, UnreachableError, type PairedHost } from "./remote";
 import { fromBase64, toBase64, utf8Decode, utf8Encode } from "./encoding";
 
 describe("encoding", () => {
@@ -54,6 +54,15 @@ describe("parsePairingUrl", () => {
     expect(web.publicUrl).toBeUndefined();
     expect(web.addresses).toEqual(["https://ai.example.org"]);
     expect(() => parsePairingUrl("brainwashed://pair?v=1&k=abc&t=tok&a=&p=1&u=javascript%3Aalert(1)")).toThrow();
+  });
+
+  it("reads where to look the computer up when its address changes", () => {
+    const lookup = "https://book.example/a/ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0";
+    const info = parsePairingUrl(`brainwashed://pair?v=1&k=abc&t=tok&a=&p=1&u=https%3A%2F%2Fa.example&b=${encodeURIComponent(lookup)}`);
+    expect(info.lookup).toBe(lookup);
+    expect(() => parsePairingUrl("brainwashed://pair?v=1&k=abc&t=tok&a=1.2.3.4&p=1&b=javascript%3Aalert(1)")).toThrow(/address book/);
+    // The web app can only reach the address that served it.
+    expect(parsePairingUrl(`https://a.example/#pair?v=1&k=abc&t=tok&a=&p=1&b=${encodeURIComponent(lookup)}`, { address: "https://a.example", port: 443 }).lookup).toBeUndefined();
   });
 
   it("reads the relay address", () => {
@@ -192,6 +201,75 @@ describe("RemoteHost", () => {
     );
     await expect(remote.info()).rejects.toThrow(/Couldn't reach/);
     expect(calls).toEqual([undefined]);
+  });
+});
+
+describe("finding a computer whose address changed", () => {
+  const hostKeys = nacl.box.keyPair();
+  const phone = nacl.box.keyPair();
+  const lookup = "https://book.example/a/id";
+  const host = (): PairedHost => ({
+    hostId: "h",
+    hostName: "h",
+    hostKey: toBase64(hostKeys.publicKey),
+    deviceId: "d",
+    publicKey: toBase64(phone.publicKey),
+    secretKey: toBase64(phone.secretKey),
+    addresses: ["192.0.2.1"],
+    port: 1,
+    publicUrl: "https://old.example",
+    lookup,
+  });
+  /** The computer now answers at `now`; everything else is offline. */
+  function network(now: string | null, book: unknown = { url: now }) {
+    const asked: string[] = [];
+    const fetchImpl = async (url: string) => {
+      asked.push(url);
+      if (url === lookup) return { ok: book !== null, status: book ? 200 : 404, text: async () => JSON.stringify(book) };
+      if (now && url === `${now}/rpc`) {
+        const nonce = nacl.randomBytes(24);
+        const c = nacl.box(utf8Encode(JSON.stringify({ ok: { version: "9.9.9" } })), nonce, phone.publicKey, hostKeys.secretKey);
+        return { ok: true, status: 200, text: async () => JSON.stringify({ n: toBase64(nonce), c: toBase64(c) }) };
+      }
+      throw new TypeError("offline");
+    };
+    return { asked, fetchImpl: fetchImpl as never };
+  }
+
+  it("looks it up in the address book and remembers the new address", async () => {
+    const { asked, fetchImpl } = network("https://new.example");
+    const saved: PairedHost[] = [];
+    const addresses: string[] = [];
+    const remote = new RemoteHost(host(), fetchImpl, (a) => addresses.push(a), (h) => saved.push(h));
+    expect(((await remote.info()) as { version: string }).version).toBe("9.9.9");
+    expect(asked).toEqual(["http://192.0.2.1:1/rpc", "https://old.example/rpc", lookup, "https://new.example/rpc"]);
+    expect(remote.host.publicUrl).toBe("https://new.example");
+    expect(addresses).toEqual(["https://new.example"]);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ publicUrl: "https://new.example", lastAddress: "https://new.example" });
+
+    // Next time the new address is tried first, with no lookup.
+    asked.length = 0;
+    await remote.info();
+    expect(asked).toEqual(["https://new.example/rpc"]);
+  });
+
+  it("says the computer is offline when the address book has nothing new", async () => {
+    for (const book of [{ url: "https://old.example" }, null, { url: "javascript:alert(1)" }]) {
+      const { asked, fetchImpl } = network(null, book);
+      const saved: PairedHost[] = [];
+      const remote = new RemoteHost(host(), fetchImpl, undefined, (h) => saved.push(h));
+      await expect(remote.info()).rejects.toBeInstanceOf(UnreachableError);
+      expect(asked.at(-1)).toBe(lookup);
+      expect(saved).toEqual([]);
+    }
+  });
+
+  it("doesn't look anything up without an address book", async () => {
+    const { asked, fetchImpl } = network("https://new.example");
+    const remote = new RemoteHost({ ...host(), lookup: undefined }, fetchImpl);
+    await expect(remote.info()).rejects.toThrow(/Couldn't reach/);
+    expect(asked).not.toContain(lookup);
   });
 });
 

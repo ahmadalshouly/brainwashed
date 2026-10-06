@@ -1,0 +1,14 @@
+name = "brainwashed-address-book"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# Forget computers that haven't checked in for 30 days, once a day.
+[triggers]
+crons = ["17 3 * * *"]
+
+# Create it with `npx wrangler d1 create brainwashed-address-book`, then put
+# the database_id it prints here. See README.md.
+[[d1_databases]]
+binding = "DB"
+database_name = "brainwashed-address-book"
+database_id = "REPLACE_WITH_YOUR_DATABASE_ID"

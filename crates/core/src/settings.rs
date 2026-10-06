@@ -39,6 +39,10 @@ pub struct Settings {
     pub public_url: Option<String>,
     /// Use this cloudflared instead of downloading one.
     pub cloudflared_path: Option<PathBuf>,
+    /// Address book where this computer posts its current public address, so
+    /// paired devices find it after the free tunnel's address changes. None
+    /// uses the BrainWashed address book; `off` turns it off.
+    pub address_book: Option<String>,
     /// Look on GitHub for newer releases at startup.
     pub check_for_updates: bool,
     /// Model settings for every chat, from every device. A chat can still
@@ -82,6 +86,7 @@ impl Default for Settings {
             tunnel_token: None,
             public_url: None,
             cloudflared_path: None,
+            address_book: None,
             check_for_updates: true,
             chat_defaults: SamplingOptions::default(),
             skill_index: None,

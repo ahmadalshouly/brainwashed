@@ -10,7 +10,10 @@
 //! It also serves the web app (`apps/web`): chat for everyone, and the admin
 //! pages for admins. Remote access runs through a Cloudflare tunnel
 //! (`tunnel`), a stable public address, or a self-hosted relay (`relay`).
+//! The address book (`address_book`) lets devices find a tunnel whose address
+//! changed.
 
+pub mod address_book;
 mod admin;
 pub mod api_keys;
 pub mod audit;
@@ -25,6 +28,7 @@ pub mod tunnel;
 pub mod usage;
 mod web;
 
+pub use address_book::AddressBookStatus;
 pub use api_keys::ApiKey;
 pub use audit::AuditEntry;
 pub use devices::{Device, DeviceRole};

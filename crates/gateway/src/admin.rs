@@ -45,6 +45,7 @@ const AUDITED: &[&str] = &[
     "deleteMcpServer",
     "setMcpServerEnabled",
     "restartMcpServer",
+    "newAddress",
 ];
 
 type CallResult = Result<Value, String>;
@@ -321,6 +322,10 @@ async fn call(gw: &Gateway, device: &Device, method: &str, params: Value) -> Cal
             Ok(public_settings(&engine.settings()))
         }
         "access" => to_json(gw.status()),
+        "newAddress" => {
+            gw.new_address().await.map_err(|e| e.to_string())?;
+            to_json(gw.status())
+        }
         "checkForUpdate" => to_json(engine.check_for_update().await),
 
         // ----- API keys -----
@@ -499,6 +504,11 @@ fn merge_settings(settings: Settings, patch: &Value) -> Result<Settings, String>
             }
         };
     }
+    next.address_book = match next.address_book.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some("off") => Some("off".into()),
+        Some(book) => crate::address_book::book_url(Some(book))?,
+    };
     next.skill_index = match next.skill_index.as_deref().map(str::trim) {
         None | Some("") => None,
         Some(u) if u.starts_with("https://") || u.starts_with("http://localhost") => {

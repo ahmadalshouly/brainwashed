@@ -7,6 +7,8 @@
 //! cargo run -p brainwashed-gateway --example devserver -- /tmp/bw-data [port]
 //! ```
 //! Set BRAINWASHED_TEST_LLAMA_SERVER and BRAINWASHED_TEST_MODEL to also load a model.
+//! Set BRAINWASHED_TEST_PUBLIC_URL and BRAINWASHED_TEST_ADDRESS_BOOK to post a
+//! public address to an address book (services/address-book).
 
 use brainwashed_core::{Engine, EngineConfig};
 use brainwashed_gateway::{DeviceRole, Gateway};
@@ -32,11 +34,23 @@ async fn main() {
         engine.load_model(&m.id).await.unwrap();
     }
 
+    let book = std::env::var("BRAINWASHED_TEST_ADDRESS_BOOK").ok();
+    if let Some(book) = book.clone() {
+        let mut s = engine.settings();
+        s.remote_access = brainwashed_core::RemoteAccess::Off;
+        s.public_url = std::env::var("BRAINWASHED_TEST_PUBLIC_URL").ok();
+        s.address_book = Some(book);
+        engine.update_settings(s).unwrap();
+    }
+
     let relay = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let relay_url = format!("http://{}", relay.local_addr().unwrap());
     tokio::spawn(brainwashed_relay::serve(relay));
 
     let gateway = Gateway::new(engine.clone(), &data_dir).unwrap();
+    if book.is_some() {
+        gateway.apply_settings().unwrap();
+    }
     gateway.set_relay_url(Some(&relay_url)).unwrap();
     let addr = gateway.start(port).await.unwrap();
     while !gateway.status().relay.is_some_and(|r| r.connected) {

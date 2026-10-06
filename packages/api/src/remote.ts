@@ -46,6 +46,8 @@ export interface PairingInfo {
   relay?: string;
   /** The host's public https address (a tunnel or the owner's own domain). */
   publicUrl?: string;
+  /** Where to look up the public address when it changes (the address book). */
+  lookup?: string;
 }
 
 const PAIRING_LINK = /^(?:brainwashed:\/\/pair|https?:\/\/[^#]*#pair)\?(.*)$/;
@@ -85,6 +87,10 @@ export function parsePairingUrl(url: string, at?: { address: string; port: numbe
   if (publicUrl !== undefined && !/^https?:\/\/[^/?#\s]+$/.test(publicUrl)) {
     throw new Error("This pairing code has a bad public address.");
   }
+  const lookup = at ? undefined : params.get("b");
+  if (lookup !== undefined && !/^https?:\/\/[^/?#\s]+\/a\/[A-Za-z0-9_-]+$/.test(lookup)) {
+    throw new Error("This pairing code has a bad address book link.");
+  }
   if (addresses.length === 0 && !relayUrl && !publicUrl) {
     throw new Error("The computer isn't on a local network. Connect it to Wi-Fi, then show a new code.");
   }
@@ -96,6 +102,7 @@ export function parsePairingUrl(url: string, at?: { address: string; port: numbe
     hostName: params.get("n") ?? "Computer",
     ...(relayUrl ? { relay: `${relayUrl}/h/${hostKey}` } : {}),
     ...(publicUrl ? { publicUrl } : {}),
+    ...(lookup ? { lookup } : {}),
   };
 }
 
@@ -114,6 +121,11 @@ export interface PairedHost {
   relay?: string;
   /** The host's public https address, tried after the local addresses and before the relay. */
   publicUrl?: string;
+  /**
+   * Where to look up the public address when none of the saved ones answer,
+   * because the host's free tunnel restarted with a new one.
+   */
+  lookup?: string;
   /** What the host lets this device do. Older hosts don't say. */
   role?: DeviceRole;
   /** The address (or relay URL) that last worked, tried first. */
@@ -125,7 +137,7 @@ function candidates(h: { addresses: string[]; publicUrl?: string; relay?: string
   return [...h.addresses, ...(h.publicUrl ? [h.publicUrl] : []), ...(h.relay ? [h.relay] : [])];
 }
 
-type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{
+type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<{
   ok: boolean;
   status: number;
   text(): Promise<string>;
@@ -171,7 +183,14 @@ async function errorFrom(res: { status: number; text(): Promise<string> }): Prom
   return new HostReplyError(message, res.status);
 }
 
-/** How long to wait for an address to answer before trying the next one. */
+/** None of the host's addresses answered. */
+export class UnreachableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnreachableError";
+  }
+}
+
 /**
  * For streamed replies. On Android, Expo's fetch holds back brotli-compressed
  * bodies and, in development builds, any body its network inspector doesn't
@@ -239,7 +258,7 @@ async function reach<T>(
       if (!answered) outer?.removeEventListener("abort", onOuterAbort);
     }
   }
-  throw new Error(
+  throw new UnreachableError(
     hasRelay
       ? "Couldn't reach the computer. Check that it's on and BrainWashed is open with device access on."
       : "Couldn't reach the computer. Check that it's on, BrainWashed is open with phone access on, and both are on the same Wi-Fi.",
@@ -279,6 +298,7 @@ export async function pairWithHost(
     port: info.port,
     ...(info.relay ? { relay: info.relay } : {}),
     ...(info.publicUrl ? { publicUrl: info.publicUrl } : {}),
+    ...(info.lookup ? { lookup: info.lookup } : {}),
     ...(result.role ? { role: result.role } : {}),
     lastAddress: address,
   };
@@ -294,6 +314,8 @@ export class RemoteHost {
     fetchImpl: FetchLike = fetch as unknown as FetchLike,
     /** Called when a different address than last time worked. */
     private readonly onAddressChange?: (address: string) => void,
+    /** Called when the host's public address changed; save the host. */
+    private readonly onHostChange?: (host: PairedHost) => void,
   ) {
     this.hostKey = fromBase64(host.hostKey);
     this.secretKey = fromBase64(host.secretKey);
@@ -338,6 +360,8 @@ export class RemoteHost {
   settings = () => this.call<HostSettings>("settings");
   updateSettings = (settings: Partial<HostSettings>) => this.call<HostSettings>("updateSettings", { settings });
   access = () => this.call<AccessStatus>("access");
+  /** New address book secret and tunnel address; devices paired before need a new code. */
+  newAddress = () => this.call<AccessStatus>("newAddress");
   checkForUpdate = () => this.call<UpdateInfo | null>("checkForUpdate");
   devices = () => this.call<PairedDevice[]>("devices");
   createPairingOffer = (role: DeviceRole) => this.call<PairingOffer>("createPairingOffer", { role });
@@ -373,31 +397,73 @@ export class RemoteHost {
     return lastAddress && all.includes(lastAddress) ? [lastAddress, ...all.filter((a) => a !== lastAddress)] : all;
   }
 
+  /**
+   * Asks the address book where the host is now. Returns the address when it
+   * differs from the saved one, so it's worth trying.
+   */
+  private async lookUpMovedHost(signal?: AbortSignal): Promise<string | null> {
+    const { lookup } = this.host;
+    if (!lookup) return null;
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    signal?.addEventListener("abort", onAbort);
+    const timer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
+    try {
+      const res = await this.fetchImpl(lookup, { method: "GET", headers: {}, signal: controller.signal });
+      if (!res.ok) return null;
+      const url = (JSON.parse(await res.text()) as { url?: unknown }).url;
+      if (typeof url !== "string" || !/^https?:\/\/[^/?#\s]+$/.test(url)) return null;
+      return url === this.host.publicUrl ? null : url;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    }
+  }
+
   private async post(method: string, params: unknown, signal?: AbortSignal, streamed = false) {
     const env = seal({ ts: Date.now(), method, params: params ?? null }, this.hostKey, this.secretKey);
     const body = JSON.stringify({ deviceId: this.host.deviceId, ...env });
     // The attempt's signal times out only until a response arrives; after
     // that it aborts only if the caller's signal does, so long streamed
     // replies are not cut off.
-    const { result, address } = await reach(
-      this.addresses(),
-      this.host.port,
-      async (base, attemptSignal) => {
-        const res = await this.fetchImpl(`${base}/rpc`, {
-          method: "POST",
-          headers: streamed ? STREAM_HEADERS : { "Content-Type": "application/json" },
-          body,
-          signal: attemptSignal,
-        });
-        if (!res.ok) throw await errorFrom(res);
-        return res;
-      },
-      signal,
-      uploadAllowanceMs(method, body.length),
-    );
+    const send = (addresses: string[]) =>
+      reach(
+        addresses,
+        this.host.port,
+        async (base, attemptSignal) => {
+          const res = await this.fetchImpl(`${base}/rpc`, {
+            method: "POST",
+            headers: streamed ? STREAM_HEADERS : { "Content-Type": "application/json" },
+            body,
+            signal: attemptSignal,
+          });
+          if (!res.ok) throw await errorFrom(res);
+          return res;
+        },
+        signal,
+        uploadAllowanceMs(method, body.length),
+      );
+    let reached;
+    let moved: string | null = null;
+    try {
+      reached = await send(this.addresses());
+    } catch (e) {
+      // The host's free tunnel may have restarted with a new address.
+      if (!(e instanceof UnreachableError)) throw e;
+      moved = await this.lookUpMovedHost(signal);
+      if (!moved) throw e;
+      reached = await send([moved]);
+    }
+    const { result, address } = reached;
     if (address !== this.host.lastAddress) {
       this.host.lastAddress = address;
       this.onAddressChange?.(address);
+    }
+    if (moved) {
+      this.host.publicUrl = moved;
+      this.onHostChange?.({ ...this.host });
     }
     return result;
   }

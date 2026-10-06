@@ -1068,3 +1068,102 @@ async fn a_reply_nobody_can_resume_stops_when_the_reader_leaves() {
         "the provider is still being read"
     );
 }
+
+/// An address book that records what it's told, like services/address-book.
+async fn fake_address_book() -> (
+    String,
+    std::sync::Arc<std::sync::Mutex<Vec<(String, String, Value)>>>,
+) {
+    use axum::{extract::Path, http::Method, routing::any, Json, Router};
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let app = Router::new().route(
+        "/a/{id}",
+        any(
+            move |method: Method, Path(id): Path<String>, Json(body): Json<Value>| {
+                let log = log.clone();
+                async move {
+                    log.lock().unwrap().push((method.to_string(), id, body));
+                    Json(json!({ "ok": true }))
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}"), seen)
+}
+
+async fn wait_until(mut check: impl FnMut() -> bool) {
+    for _ in 0..200 {
+        if check() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("timed out");
+}
+
+#[tokio::test]
+async fn tells_the_address_book_where_it_is() {
+    let (book, seen) = fake_address_book().await;
+    let (gw, _url, _port, _dir) = setup().await;
+    gw.set_address_book(Some(book.clone()));
+    gw.set_public_url(Some("https://first.example.org"))
+        .unwrap();
+    wait_until(|| !seen.lock().unwrap().is_empty()).await;
+
+    let (method, id, body) = seen.lock().unwrap()[0].clone();
+    assert_eq!(method, "PUT");
+    assert_eq!(body["url"], "https://first.example.org");
+    // The id is the SHA-256 of the secret, so the book can check who's asking.
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    let key = body["key"].as_str().unwrap();
+    assert_eq!(
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(key)),
+        id
+    );
+
+    // Pairing codes say where to look it up.
+    let lookup = format!("{book}/a/{id}");
+    let offer = gw.create_pairing_offer(DeviceRole::Member).unwrap();
+    assert_eq!(
+        query(&offer.url, "b"),
+        lookup.replace(':', "%3A").replace('/', "%2F")
+    );
+    let status = gw.status().address_book.unwrap();
+    assert_eq!(status.lookup, lookup);
+    assert_eq!(status.link, format!("{book}/go/{id}"));
+    wait_until(|| {
+        gw.status().address_book.unwrap().published.as_deref() == Some("https://first.example.org")
+    })
+    .await;
+
+    // A new address is posted under the same id.
+    gw.set_public_url(Some("https://second.example.org"))
+        .unwrap();
+    wait_until(|| seen.lock().unwrap().len() >= 2).await;
+    let (method, same, body) = seen.lock().unwrap()[1].clone();
+    assert_eq!((method.as_str(), same.as_str()), ("PUT", id.as_str()));
+    assert_eq!(body["url"], "https://second.example.org");
+
+    // A new secret: the old entry is removed and a new id takes over.
+    gw.new_address().await.unwrap();
+    wait_until(|| seen.lock().unwrap().len() >= 4).await;
+    let log = seen.lock().unwrap().clone();
+    let deleted = log.iter().find(|(m, _, _)| m == "DELETE").unwrap();
+    assert_eq!(deleted.1, id);
+    assert_eq!(deleted.2["key"], key);
+    let fresh = log.iter().rev().find(|(m, _, _)| m == "PUT").unwrap();
+    assert_ne!(fresh.1, id);
+    assert_eq!(fresh.2["url"], "https://second.example.org");
+    assert_ne!(gw.status().address_book.unwrap().lookup, lookup);
+
+    // Off: pairing codes leave it out.
+    gw.set_address_book(None);
+    let offer = gw.create_pairing_offer(DeviceRole::Member).unwrap();
+    assert!(!offer.url.contains("&b="));
+    assert!(gw.status().address_book.is_none());
+}

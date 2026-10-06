@@ -20,7 +20,13 @@ BrainWashed downloads `cloudflared` from Cloudflare's GitHub releases the first 
 
 ### Free tunnel addresses change
 
-A quick tunnel's address is new every time BrainWashed (or the tunnel) restarts. Browsers remember their pairing per address, so after a restart they need a new code from **Devices**. For an address that never changes, use your own domain:
+A quick tunnel's address is new every time BrainWashed (or the tunnel) restarts. While it runs, BrainWashed posts its current address to the **address book** ([services/address-book](../services/address-book/README.md)), a tiny service that only learns addresses. Pairing codes carry a link to look it up, so the phone apps find the new address on their own and never need a new code because of a restart.
+
+- **Browsers** remember their pairing per address, so a browser on the old address needs a new code from **Devices**. **Remote access** shows a permanent link that always opens the current address.
+- **New address** (on **Remote access**) gives this computer a new address book entry and a new tunnel address, for example if a link leaked. Devices paired before keep working on your network; away from home they need a new code. To lock out a lost device for good, remove it under **Devices**.
+- `brainwashed remote book <https://...>` uses your own address book; `brainwashed remote book off` turns it off.
+
+For an address that never changes at all, use your own domain:
 
 1. In the Cloudflare dashboard, go to **Zero Trust > Networks > Tunnels** and create a tunnel. Choose any connector; you only need its token (the long string after `--token`).
 2. Add a **public hostname**, for example `ai.example.com`, with service `http://localhost:47860`.

@@ -19,7 +19,7 @@ This protocol is a public, versioned interface. The web app and the official app
 ## Pairing
 
 1. An admin clicks **Show code** under **Devices**, choosing whether the new device is an admin or a member. The host has two forms of the same link:
-   - App link: `brainwashed://pair?v=1&k=<host public key>&t=<one-time token>&a=<LAN IPs>&p=<port>&n=<host name>`, plus `&u=<public URL>` when the host is reachable from anywhere (a tunnel or the owner's own domain), and `&r=<relay URL>` when it uses a relay.
+   - App link: `brainwashed://pair?v=1&k=<host public key>&t=<one-time token>&a=<LAN IPs>&p=<port>&n=<host name>`, plus `&u=<public URL>` when the host is reachable from anywhere (a tunnel or the owner's own domain), and `&r=<relay URL>` when it uses a relay. `&b=<lookup URL>` says where to look the public address up after it changes (see below).
    - Web link: `<public URL>/#pair?v=1&k=…`, or `http://<LAN IP>:<port>/#pair?v=1&k=…` with no public URL, with the same fields after `#pair?`.
 
    The QR code shows the web link, so a phone camera opens the web app. Clients must accept both forms.
@@ -53,7 +53,7 @@ Admins can also call:
 |---|---|
 | Models | `loadModel { id }`, `unloadModel`, `hardware`, `catalog`, `downloadModel { repo, quant? }` (returns at once; poll `downloads`), `downloads`, `deleteModel { id }`, `setModelSpeedup { id, speedup: id \| null }` |
 | Skills | `setSkillEnabled { name, enabled }`, `skillList` (folder, skills, load errors), `skillSource { name }`, `saveSkill { source, previousName? }`, `deleteSkill { name }`, `communitySkills` (the community index), `previewSkill { spec }` (a community skill name or a link; returns the source, its SHA-256 and warnings), `installSkill { spec, sha256, replace? }` |
-| Settings | `settings`, `updateSettings { settings }` (only the fields given change; the tunnel token is never sent back, only `tunnel_token_set`), `access` (addresses, tunnel, relay, public URL), `checkForUpdate` |
+| Settings | `settings`, `updateSettings { settings }` (only the fields given change; the tunnel token is never sent back, only `tunnel_token_set`), `access` (addresses, tunnel, relay, public URL), `checkForUpdate`, `newAddress` (new address book id and tunnel address; returns `access`) |
 | Devices | `devices`, `createPairingOffer { role }` (includes `qr`, the code as rows of `0`/`1`), `removeDevice { id }`, `setDeviceRole { id, role }`, `renameDevice { id, name }` |
 | Cloud providers | `providers` (keys are never sent back, only `keySet` and `keyHint`), `saveProvider { provider: { id, name, baseUrl, apiKey?, models, members } }` (no `apiKey` keeps the saved key), `deleteProvider { id }`, `providerModels { baseUrl, apiKey?, id? }` |
 | Tools (MCP servers) | `mcpServers` (each with `status`, `tools`, `serverInfo` and the last lines of `log`), `saveMcpServer { server: { id, name, enabled, members, transport } }` where `transport` is `{ type: "stdio", command, args, env, cwd? }` or `{ type: "http", url, headers }` (starts it in the background; poll `mcpServers` while its status is `starting`), `setMcpServerEnabled { id, enabled }`, `restartMcpServer { id }`, `deleteMcpServer { id }` |
@@ -89,7 +89,7 @@ It streams `application/x-ndjson` (uncompressed: send `Accept-Encoding: identity
 
 ## Public address
 
-When the pairing link has `u`, the host is reachable at that `https://` URL from anywhere, with the same paths (`/hello`, `/pair`, `/rpc`) and the same bodies. Clients should try the local addresses first, then `u`, then the relay, and remember whichever answered. A quick tunnel's address changes when the host restarts; clients that can't reach any address should ask the user to pair again.
+When the pairing link has `u`, the host is reachable at that `https://` URL from anywhere, with the same paths (`/hello`, `/pair`, `/rpc`) and the same bodies. Clients should try the local addresses first, then `u`, then the relay, and remember whichever answered. A quick tunnel's address changes when the host restarts. When the link has `b` (`https://<address book>/a/<id>`), clients that can't reach any address should `GET` it: it answers `{"url": "https://...", "updated": <unix seconds>}` with the host's current public address (or 404). If that differs from the saved `u`, try it, and save it as the new public address when it answers. The address book can't impersonate the host, because replies are still encrypted with the host's key. Clients that still can't reach the host, or have no `b`, should ask the user to pair again. Admins can call `newAddress` to give the host a new lookup id and tunnel address; earlier lookups then return 404.
 
 ## Relay
 

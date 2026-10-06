@@ -1393,3 +1393,7 @@ select:focus {
     display: none;
   }
 }
+
+.address-book {
+  margin: 10px 0;
+}

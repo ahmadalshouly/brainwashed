@@ -54,6 +54,11 @@ Usage:
                                                      a reverse proxy)
                                relay <https://...>   your own BrainWashed relay
                                off                   local network only
+                               book <https://...|off>
+                                                     where this computer posts
+                                                     its address so paired
+                                                     devices find it after it
+                                                     changes
   brainwashed service install    Start BrainWashed in the background at login.
   brainwashed service uninstall  Stop doing that.
 
@@ -664,6 +669,10 @@ fn remote(engine: &Engine, operands: &[String], running: bool) -> Result {
             if let Some(r) = &s.relay_url {
                 println!("Relay: {r}");
             }
+            match brainwashed_gateway::address_book::book_url(s.address_book.as_deref()) {
+                Ok(Some(book)) => println!("Address book: {book}"),
+                _ => println!("Address book: off"),
+            }
             return Ok(());
         }
         Some("off") => {
@@ -682,6 +691,11 @@ fn remote(engine: &Engine, operands: &[String], running: bool) -> Result {
         Some("url") => {
             s.remote_access = RemoteAccess::Off;
             s.public_url = Some(check(arg(1, "the https:// address")?)?);
+        }
+        Some("book") => {
+            let book = arg(1, "the address book address or `off`")?;
+            brainwashed_gateway::address_book::book_url(Some(&book))?;
+            s.address_book = Some(book.trim().trim_end_matches('/').to_string());
         }
         Some("relay") => match arg(1, "the relay address or `off`")?.as_str() {
             "off" => s.relay_url = None,
