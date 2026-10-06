@@ -112,6 +112,12 @@ The optional BrainWashed iOS and Android apps, sold separately, scan the same co
 
 Messages are end-to-end encrypted with keys exchanged through the QR code, so the tunnel only ever carries ciphertext.
 
+### Android app (APK)
+
+You can download a test build of the Android app here: **[brainwashed-android.apk](https://github.com/ahmadalshouly/brainwashed/releases/download/v0.3.7/brainwashed-android.apk)** (about 122 MB, SHA-256 `8a870f852d4aa3fb59c1ce6298fce498ce3cd8818c3f3d1a1023e66982c4ca7c`). Open it on your phone and allow installing apps from your browser when Android asks.
+
+> **Disclaimer:** this APK is provided as is, without warranty of any kind, and you install and use it at your own risk. It is not distributed through Google Play, so Android will warn you about installing it. The authors are not responsible for any damage, data loss or other problems that come from installing or using it.
+
 ## Support the project
 
 BrainWashed is free and open source. If it's useful to you, you can [donate through PayPal](https://www.paypal.com/pool/9tf5FyKDzU) to support its development. The admin panel links there too.
