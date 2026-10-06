@@ -1619,7 +1619,7 @@
   margin-top: 12px;
 }
 
-.num {
+label.num {
   display: flex;
   flex-direction: column;
   gap: 4px;
