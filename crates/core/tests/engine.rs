@@ -397,7 +397,17 @@ async fn drafts_only_run_as_a_speedup() {
     let mut s = engine.settings();
     s.llama_server_path = Some(fake);
     engine.update_settings(s).unwrap();
-    let err = engine.load_model(&main.id).await.unwrap_err().to_string();
+    // Another test forking while the script was still open for writing can
+    // make its first start fail with "text file busy"; try again then.
+    let mut tries = 0;
+    let err = loop {
+        let err = engine.load_model(&main.id).await.unwrap_err().to_string();
+        tries += 1;
+        if args.exists() || tries == 20 {
+            break err;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
     assert!(err.contains("speed-up"), "{err}");
     let args = std::fs::read_to_string(args).unwrap();
     assert!(
