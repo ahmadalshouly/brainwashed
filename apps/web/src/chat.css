@@ -72,6 +72,55 @@
   --user-bubble: color-mix(in srgb, var(--accent) 32%, rgb(30 28 44 / 0.8));
 }
 
+/* Black and white, like the logo: gray glows and neutral text. */
+:root[data-accent="mono"] .chat-app {
+  --ink: #111114;
+  --ink-2: #5c5c63;
+  --ink-3: #8a8a92;
+  --hairline: rgb(0 0 0 / 0.08);
+  --hover: rgb(0 0 0 / 0.05);
+  --base: #f2f2f3;
+  --blob-1: #d4d4d8;
+  --blob-2: #e7e7ea;
+  --blob-3: #c4c4c9;
+  --code: rgb(250 250 250 / 0.85);
+  --code-head: rgb(240 240 242 / 0.9);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="mono"]:not([data-theme="light"]) .chat-app {
+    --glass: rgb(28 28 30 / 0.55);
+    --glass-strong: rgb(30 30 32 / 0.88);
+    --ink: #f4f4f5;
+    --ink-2: #b4b4bb;
+    --ink-3: #7f7f87;
+    --hairline: rgb(255 255 255 / 0.08);
+    --hover: rgb(255 255 255 / 0.06);
+    --base: #0b0b0c;
+    --blob-1: #3f3f46;
+    --blob-2: #27272a;
+    --blob-3: #52525b;
+    --code: rgb(12 12 14 / 0.7);
+    --code-head: rgb(22 22 24 / 0.8);
+  }
+}
+
+:root[data-accent="mono"][data-theme="dark"] .chat-app {
+  --glass: rgb(28 28 30 / 0.55);
+  --glass-strong: rgb(30 30 32 / 0.88);
+  --ink: #f4f4f5;
+  --ink-2: #b4b4bb;
+  --ink-3: #7f7f87;
+  --hairline: rgb(255 255 255 / 0.08);
+  --hover: rgb(255 255 255 / 0.06);
+  --base: #0b0b0c;
+  --blob-1: #3f3f46;
+  --blob-2: #27272a;
+  --blob-3: #52525b;
+  --code: rgb(12 12 14 / 0.7);
+  --code-head: rgb(22 22 24 / 0.8);
+}
+
 .chat-app.tune-open {
   grid-template-columns: 300px minmax(0, 1fr) 340px;
 }
@@ -157,22 +206,11 @@
 .orb {
   display: inline-block;
   flex: none;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.9), transparent 34%),
-    radial-gradient(
-      circle at 70% 75%,
-      color-mix(in srgb, var(--accent) 80%, #ec4899),
-      transparent 62%
-    ),
-    linear-gradient(
-      140deg,
-      color-mix(in srgb, var(--accent) 70%, #a78bfa),
-      color-mix(in srgb, var(--accent) 60%, #f472b6)
-    );
+  border-radius: 26%;
+  background: #0f0f10 url("/logo.png") center / cover no-repeat;
   box-shadow:
-    0 0 0 1px rgb(255 255 255 / 0.25) inset,
-    0 8px 24px -6px color-mix(in srgb, var(--accent) 60%, transparent);
+    0 0 0 1px var(--hairline),
+    0 8px 24px -10px rgb(0 0 0 / 0.45);
 }
 
 .orb.tiny {
@@ -197,8 +235,8 @@
   50% {
     transform: scale(1.06);
     box-shadow:
-      0 0 0 1px rgb(255 255 255 / 0.25) inset,
-      0 16px 48px -6px color-mix(in srgb, var(--accent) 70%, transparent);
+      0 0 0 1px var(--hairline),
+      0 16px 40px -10px rgb(0 0 0 / 0.5);
   }
 }
 
@@ -738,7 +776,7 @@
 
 .hero-actions button.primary {
   background: var(--accent) !important;
-  color: #fff !important;
+  color: var(--accent-text, #fff) !important;
   border-color: transparent !important;
 }
 
@@ -1163,7 +1201,7 @@
 
 .edit-actions .primary {
   background: var(--accent) !important;
-  color: #fff !important;
+  color: var(--accent-text, #fff) !important;
 }
 
 /* ----- markdown inside the chat ----- */
@@ -1307,7 +1345,7 @@
 
 .round.send {
   background: var(--accent) !important;
-  color: #fff !important;
+  color: var(--accent-text, #fff) !important;
   transition:
     transform 0.15s,
     opacity 0.15s;
@@ -1619,7 +1657,7 @@
   margin-top: 12px;
 }
 
-.num {
+label.num {
   display: flex;
   flex-direction: column;
   gap: 4px;

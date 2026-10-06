@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/logo.png" alt="BrainWashed" width="160" /></p>
+
 # BrainWashed
 
 Turn your laptop into a private AI server, and use it from your phone or any browser, anywhere.

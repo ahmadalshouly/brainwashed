@@ -765,6 +765,15 @@ async fn rpc(State(gw): State<Gateway>, Json(req): Json<RpcRequest>) -> Response
     if call.method == "chatResume" {
         return chat_resume(gw, &device.id, device_key, call.params);
     }
+    if call.method == "chatStop" {
+        // Unknown or finished replies are fine: there is nothing left to stop.
+        let id = call.params["replyId"].as_str().unwrap_or_default();
+        if let Some(reply) = gw.inner.replies.get(&device.id, id) {
+            reply.stop();
+        }
+        let body = json!({ "ok": true });
+        return Json(gw.inner.keys.seal(&device_key, body.to_string().as_bytes())).into_response();
+    }
     let result = crate::admin::handle(&gw, &device, &call.method, call.params).await;
     let body = match result {
         Ok(v) => json!({ "ok": v }),
@@ -777,8 +786,10 @@ async fn rpc(State(gw): State<Gateway>, Json(req): Json<RpcRequest>) -> Response
 /// `{"done":"full answer"}` (with `toolCalls` when the model made any) or
 /// `{"error":"…"}`.
 ///
-/// The answer keeps being written when the phone disconnects. With a
-/// `replyId`, it is also kept for a while so `chatResume` can send the rest.
+/// With a `replyId`, the answer keeps being written when the phone
+/// disconnects and is kept for a while so `chatResume` can send the rest;
+/// `chatStop` ends it early. Without one, the answer stops when the
+/// connection closes. A stopped answer ends with `{"done":"text so far","stopped":true}`.
 fn chat(
     gw: Gateway,
     device_id: &str,
@@ -801,46 +812,79 @@ fn chat(
     // `local` or `<provider>/<model>`; the local model when left out.
     let model = params["model"].as_str().map(str::to_string);
     let reply = Reply::new();
-    match params["replyId"].as_str() {
+    let resumable = match params["replyId"].as_str() {
         Some(id) if reply_store::valid_id(id) => {
-            gw.inner.replies.insert(device_id, id, reply.clone())
+            gw.inner.replies.insert(device_id, id, reply.clone());
+            true
         }
         Some(_) => return reject(StatusCode::BAD_REQUEST, "bad replyId"),
-        None => {}
-    }
+        None => false,
+    };
     let engine = gw.inner.engine.clone();
     let writer = reply.clone();
     tokio::spawn(async move {
         let events = writer.clone();
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = calls.clone();
-        let result = engine
-            .chat_with(
-                &messages,
-                &options,
-                model.as_deref(),
-                admin,
-                true,
-                move |e: ChatEvent| {
-                    if let ChatEvent::ToolCall(c) = &e {
-                        seen.lock().unwrap().push(c.clone());
-                    }
-                    events.push(json!({ "event": e }), false)
-                },
-            )
-            .await;
-        let calls = std::mem::take(&mut *calls.lock().unwrap());
-        writer.push(
-            match result {
-                // Tool calls ride along so a stored chat can keep them.
-                Ok(answer) if !calls.is_empty() => json!({ "done": answer, "toolCalls": calls }),
-                Ok(answer) => json!({ "done": answer }),
-                Err(e) => json!({ "error": e.to_string() }),
-            },
+        let text = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let written = text.clone();
+        let answer = engine.chat_with(
+            &messages,
+            &options,
+            model.as_deref(),
+            admin,
             true,
+            move |e: ChatEvent| {
+                match &e {
+                    ChatEvent::ToolCall(c) => seen.lock().unwrap().push(c.clone()),
+                    ChatEvent::Content { text } => written.lock().unwrap().push_str(text),
+                    _ => {}
+                }
+                events.push(json!({ "event": e }), false)
+            },
         );
+        // Dropping the answer closes the model's stream, which makes
+        // llama-server (and cloud providers) stop generating.
+        let (result, stopped) = tokio::select! {
+            result = answer => (result, false),
+            _ = writer.stopped() => (Ok(std::mem::take(&mut *text.lock().unwrap())), true),
+        };
+        let calls = std::mem::take(&mut *calls.lock().unwrap());
+        let mut frame = match result {
+            Ok(answer) => json!({ "done": answer }),
+            Err(e) => json!({ "error": e.to_string() }),
+        };
+        // Tool calls ride along so a stored chat can keep them.
+        if !calls.is_empty() && frame.get("done").is_some() {
+            frame["toolCalls"] = json!(calls);
+        }
+        if stopped {
+            frame["stopped"] = json!(true);
+        }
+        writer.push(frame, true);
     });
-    stream_frames(gw, device_key, reply.stream(0))
+    let frames = reply.clone().stream(0);
+    if resumable {
+        return stream_frames(gw, device_key, frames);
+    }
+    // Nobody can pick this reply up again, so stop it when the reader leaves.
+    let guard = StopOnDrop(reply);
+    stream_frames(
+        gw,
+        device_key,
+        futures_util::StreamExt::map(frames, move |f| {
+            let _ = &guard;
+            f
+        }),
+    )
+}
+
+struct StopOnDrop(std::sync::Arc<Reply>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.stop();
+    }
 }
 
 /// `chatResume { replyId, after }`: the frames of a kept reply from index

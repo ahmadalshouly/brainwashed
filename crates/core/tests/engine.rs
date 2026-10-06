@@ -297,7 +297,19 @@ fn stops_llama_server_left_over_from_a_crash() {
     // Stand-in for a llama-server that kept running after its app died.
     let fake = dir.path().join("llama-server");
     std::fs::copy("/bin/sleep", &fake).unwrap();
-    let mut orphan = std::process::Command::new(&fake).arg("30").spawn().unwrap();
+    // Another test forking while the copy is still open for writing makes
+    // the exec fail with "text file busy" until that child execs too.
+    let mut orphan = (0..50)
+        .find_map(
+            |_| match std::process::Command::new(&fake).arg("30").spawn() {
+                Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    None
+                }
+                other => Some(other.unwrap()),
+            },
+        )
+        .expect("the copied program stayed busy");
     std::fs::write(dir.path().join("llama-server.pid"), orphan.id().to_string()).unwrap();
 
     let _engine = engine_blocking(dir.path());
@@ -385,7 +397,17 @@ async fn drafts_only_run_as_a_speedup() {
     let mut s = engine.settings();
     s.llama_server_path = Some(fake);
     engine.update_settings(s).unwrap();
-    let err = engine.load_model(&main.id).await.unwrap_err().to_string();
+    // Another test forking while the script was still open for writing can
+    // make its first start fail with "text file busy"; try again then.
+    let mut tries = 0;
+    let err = loop {
+        let err = engine.load_model(&main.id).await.unwrap_err().to_string();
+        tries += 1;
+        if args.exists() || tries == 20 {
+            break err;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
     assert!(err.contains("speed-up"), "{err}");
     let args = std::fs::read_to_string(args).unwrap();
     assert!(

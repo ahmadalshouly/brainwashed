@@ -951,3 +951,120 @@ async fn the_openai_api_returns_tool_calls_the_model_makes() {
     assert!(text.contains("\"tool_calls\":[{"), "{text}");
     assert!(text.contains("\"finish_reason\":\"tool_calls\""), "{text}");
 }
+
+/// A provider that writes "Hel" and then nothing, until the host hangs up.
+/// The flag turns true when the host closed the stream.
+async fn endless_provider() -> (
+    String,
+    std::sync::Arc<tokio::sync::Notify>,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    use axum::{body::Body, routing::post, Router};
+    use std::sync::{atomic::AtomicBool, Arc};
+
+    struct Closed(Arc<AtomicBool>);
+    impl Drop for Closed {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let asked = Arc::new(tokio::sync::Notify::new());
+    let closed = Arc::new(AtomicBool::new(false));
+    let (a, c) = (asked.clone(), closed.clone());
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(move || {
+            let guard = Closed(c.clone());
+            a.notify_one();
+            async move {
+                let first = futures_util::stream::once(async {
+                    Ok::<_, std::convert::Infallible>(
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
+                    )
+                });
+                let never = futures_util::stream::pending();
+                let body = futures_util::StreamExt::chain(first, never);
+                let body = futures_util::StreamExt::map(body, move |x| {
+                    let _ = &guard;
+                    x
+                });
+                (
+                    [("content-type", "text/event-stream")],
+                    Body::from_stream(body),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (base, asked, closed)
+}
+
+#[tokio::test]
+async fn stop_ends_the_reply_and_the_model_stream() {
+    use std::sync::atomic::Ordering;
+    let (_gw, url, port, _dir) = setup().await;
+    let mut phone = Phone::from_offer(&url, port);
+    phone.pair(&query(&url, "t")).await.unwrap();
+    let (base, asked, closed) = endless_provider().await;
+    phone
+        .call(
+            "saveProvider",
+            json!({ "provider": { "id": "acme", "name": "Acme", "baseUrl": base, "apiKey": "k", "models": ["fast"], "members": false }}),
+        )
+        .await;
+
+    let call = phone.sealed_call(
+        "chat",
+        json!({ "replyId": "r-stop", "model": "acme/fast", "messages": [{ "role": "user", "content": "hi" }] }),
+        now_ms(),
+    );
+    let ((_, text), stopped) = tokio::join!(phone.post(&call), async {
+        asked.notified().await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        phone.call("chatStop", json!({ "replyId": "r-stop" })).await
+    });
+    assert_eq!(stopped["ok"], true, "{stopped}");
+    let last = phone.open_line(text.lines().next_back().unwrap());
+    assert_eq!(last["done"], "Hel", "{last}");
+    assert_eq!(last["stopped"], true);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        closed.load(Ordering::SeqCst),
+        "the provider is still being read"
+    );
+
+    // Stopping a reply that already ended, or never existed, is fine.
+    let again = phone.call("chatStop", json!({ "replyId": "r-stop" })).await;
+    assert_eq!(again["ok"], true);
+}
+
+#[tokio::test]
+async fn a_reply_nobody_can_resume_stops_when_the_reader_leaves() {
+    use std::sync::atomic::Ordering;
+    let (_gw, url, port, _dir) = setup().await;
+    let mut phone = Phone::from_offer(&url, port);
+    phone.pair(&query(&url, "t")).await.unwrap();
+    let (base, asked, closed) = endless_provider().await;
+    phone
+        .call(
+            "saveProvider",
+            json!({ "provider": { "id": "acme", "name": "Acme", "baseUrl": base, "apiKey": "k", "models": ["fast"], "members": false }}),
+        )
+        .await;
+
+    let call = phone.sealed_call(
+        "chat",
+        json!({ "model": "acme/fast", "messages": [{ "role": "user", "content": "hi" }] }),
+        now_ms(),
+    );
+    // Give up on the reply soon after it starts, like a closed browser tab.
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), phone.post(&call)).await;
+    asked.notified().await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        closed.load(Ordering::SeqCst),
+        "the provider is still being read"
+    );
+}

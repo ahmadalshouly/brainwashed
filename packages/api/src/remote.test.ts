@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import nacl from "tweetnacl";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parsePairingUrl, pairWithHost, RemoteHost, HostReplyError, type PairedHost } from "./remote";
 import { fromBase64, toBase64, utf8Decode, utf8Encode } from "./encoding";
@@ -191,5 +192,50 @@ describe("RemoteHost", () => {
     );
     await expect(remote.info()).rejects.toThrow(/Couldn't reach/);
     expect(calls).toEqual([undefined]);
+  });
+});
+
+describe("stopping", () => {
+  it("stops a streamed reply at once and closes the request", async () => {
+    const hostKeys = nacl.box.keyPair();
+    const deviceKeys = nacl.box.keyPair();
+    const frame = (payload: unknown) => {
+      const n = nacl.randomBytes(nacl.box.nonceLength);
+      const c = nacl.box(utf8Encode(JSON.stringify(payload)), n, deviceKeys.publicKey, hostKeys.secretKey);
+      return utf8Encode(JSON.stringify({ n: toBase64(n), c: toBase64(c) }) + "\n");
+    };
+    let requestSignal: AbortSignal | undefined;
+    const fakeFetch = (_url: string, init: { signal?: AbortSignal }) => {
+      requestSignal = init.signal;
+      // One word, then the computer keeps going without sending more.
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(frame({ event: { kind: "content", text: "Hel" } }));
+        },
+      });
+      return Promise.resolve({ ok: true, status: 200, text: async () => "", body });
+    };
+    const remote = new RemoteHost(
+      {
+        hostId: "h",
+        hostName: "h",
+        hostKey: toBase64(hostKeys.publicKey),
+        deviceId: "d",
+        publicKey: toBase64(deviceKeys.publicKey),
+        secretKey: toBase64(deviceKeys.secretKey),
+        addresses: ["127.0.0.1"],
+        port: 1,
+      },
+      fakeFetch as never,
+    );
+    const controller = new AbortController();
+    const seen: string[] = [];
+    const reply = remote.chat([{ role: "user", content: "hi" }], (e) => {
+      if (e.kind === "content") seen.push(e.text);
+      controller.abort();
+    }, controller.signal);
+    await expect(reply).rejects.toThrow(/Stopped/);
+    expect(seen).toEqual(["Hel"]);
+    expect(requestSignal?.aborted).toBe(true);
   });
 });

@@ -28,6 +28,9 @@ pub(crate) struct Reply {
     frames: Mutex<Frames>,
     /// Bumped on every new frame so readers can wait for more.
     changed: watch::Sender<usize>,
+    /// Set when the person pressed stop or, for a reply nobody can resume,
+    /// when its reader went away.
+    stop: tokio::sync::Notify,
 }
 
 impl Reply {
@@ -35,7 +38,18 @@ impl Reply {
         Arc::new(Reply {
             frames: Mutex::new(Frames::default()),
             changed: watch::channel(0).0,
+            stop: tokio::sync::Notify::new(),
         })
+    }
+
+    /// Asks the writer to stop. Harmless once the reply finished.
+    pub(crate) fn stop(&self) {
+        self.stop.notify_one();
+    }
+
+    /// Resolves once [`Reply::stop`] was called, even if that was earlier.
+    pub(crate) async fn stopped(&self) {
+        self.stop.notified().await
     }
 
     /// Adds a frame. `last` marks the final `done` or `error` frame.
@@ -151,6 +165,15 @@ mod tests {
         assert_eq!(all.len(), 4);
         let none: Vec<_> = reply.stream(4).collect().await;
         assert!(none.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_stop_before_waiting_is_not_lost() {
+        let reply = Reply::new();
+        reply.stop();
+        tokio::time::timeout(Duration::from_secs(1), reply.stopped())
+            .await
+            .unwrap();
     }
 
     #[test]

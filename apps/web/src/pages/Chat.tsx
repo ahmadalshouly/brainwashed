@@ -34,7 +34,7 @@ import {
   type Conversation,
   type Turn,
 } from "../chatstore";
-import { ACCENTS, type Look } from "../storage";
+import { ACCENTS, MONO, swatch, type Look } from "../storage";
 import { errorText, stateText, useHost, useLoad } from "../ui";
 
 const MODEL_KEY = "brainwashed.model";
@@ -262,6 +262,7 @@ export function ChatPage({
   const [atBottom, setAtBottom] = useState(true);
 
   const abort = useRef<AbortController | null>(null);
+  const replyId = useRef<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
   const files = useRef<HTMLInputElement>(null);
@@ -294,8 +295,15 @@ export function ChatPage({
     await saveConversation(saved);
   }
 
+  // Tells the computer to stop writing too; closing the stream alone may not
+  // reach it through a tunnel.
+  function stop() {
+    if (replyId.current) remote.chatStop(replyId.current).catch(() => {});
+    abort.current?.abort();
+  }
+
   function open(c: Conversation | null) {
-    if (busy) abort.current?.abort();
+    if (busy) stop();
     setActiveId(c?.id ?? null);
     setTurns(c?.turns ?? []);
     setInstructions(c?.instructions ?? "");
@@ -326,6 +334,7 @@ export function ChatPage({
     setBusy(true);
     const controller = new AbortController();
     abort.current = controller;
+    replyId.current = `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     let thinkingStarted: number | null = null;
     let current: Turn = placeholder;
     const update = (f: (t: Turn) => Turn) => {
@@ -371,6 +380,7 @@ export function ChatPage({
         {
           options: toOptions(prefs),
           model: model && model.id !== "local" ? model.id : undefined,
+          replyId: replyId.current,
         },
       );
     } catch (e) {
@@ -395,6 +405,7 @@ export function ChatPage({
             : t,
         );
       abort.current = null;
+      replyId.current = null;
       setBusy(false);
       const finished = [...history, current];
       persist(chatId, finished, { instructions: instructions || undefined });
@@ -509,7 +520,7 @@ export function ChatPage({
       } else if (e.key === "Escape") {
         if (menu) setMenu(null);
         else if (tuneOpen) setTuneOpen(false);
-        else if (busy) abort.current?.abort();
+        else if (busy) stop();
       }
     };
     addEventListener("keydown", onKey);
@@ -698,7 +709,7 @@ export function ChatPage({
             type="button"
             className="round send stop"
             aria-label="Stop"
-            onClick={() => abort.current?.abort()}
+            onClick={stop}
           >
             <Icon name="stop" size={16} />
           </button>
@@ -922,9 +933,9 @@ export function ChatPage({
                     key={c}
                     role="radio"
                     aria-checked={look.accent === c}
-                    aria-label={c}
+                    aria-label={c === MONO ? "Black and white" : c}
                     className={look.accent === c ? "swatch on" : "swatch"}
-                    style={{ background: c }}
+                    style={{ background: swatch(c) }}
                     onClick={() => setLook({ ...look, accent: c })}
                   />
                 ))}
