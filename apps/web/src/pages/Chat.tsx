@@ -4,7 +4,11 @@ import {
   type ChatMessage,
   type ChatModel,
   type ChatOptions,
+  type GeneratedMedia,
   type InstalledModel,
+  type MediaEvent,
+  type MediaModel,
+  type MediaRequest,
   type ToolCall,
 } from "@brainwashed/api";
 import type { ShownCall } from "../chatstore";
@@ -22,17 +26,22 @@ import {
   STYLES,
   deleteConversation,
   loadConversations,
+  loadMediaPrefs,
   loadPrefs,
   newId,
   pruneConversations,
   saveConversation,
+  saveMediaPrefs,
   savePrefs,
+  sizeFor,
   sortChats,
   titleFor,
   toMarkdown,
   toOptions,
   type ChatPrefs,
   type Conversation,
+  type MediaPrefs,
+  type Shape,
   type Turn,
 } from "../chatstore";
 import { ACCENTS, MONO, swatch, type Look } from "../storage";
@@ -80,6 +89,48 @@ const SUGGESTIONS: { icon: IconName; title: string; prompt: string }[] = [
   },
 ];
 
+const PICTURE_IDEAS: { icon: IconName; title: string; prompt: string }[] = [
+  {
+    icon: "image",
+    title: "A cozy scene",
+    prompt:
+      "A cozy reading nook by a rainy window at dusk, warm lamp light, a sleeping cat, soft film photo",
+  },
+  {
+    icon: "sparkle",
+    title: "A poster",
+    prompt:
+      'A retro travel poster of a mountain lake at sunrise with the words "VISIT HOME" in bold letters',
+  },
+  {
+    icon: "palette",
+    title: "An illustration",
+    prompt:
+      "A watercolor illustration of a fox reading a map in an autumn forest, children's book style",
+  },
+];
+
+const VIDEO_IDEAS: { icon: IconName; title: string; prompt: string }[] = [
+  {
+    icon: "video",
+    title: "Ocean waves",
+    prompt:
+      "Slow waves rolling onto a sandy beach at golden hour, gentle camera pan, cinematic",
+  },
+  {
+    icon: "sparkle",
+    title: "City lights",
+    prompt:
+      "A rainy neon-lit city street at night, people with umbrellas walking past, reflections on the wet road",
+  },
+  {
+    icon: "palette",
+    title: "A little animation",
+    prompt:
+      "A paper boat drifting down a stream past flowers, stop-motion style, soft daylight",
+  },
+];
+
 function greeting(): string {
   const h = new Date().getHours();
   return h < 5
@@ -110,7 +161,10 @@ function askOf(c: ToolCall): { question: string; options: string[] } | null {
 function answerPieces(t: Turn): (string | ShownCall)[] {
   const calls = (t.toolCalls ?? [])
     .filter((c) => !askOf(c))
-    .map((c) => ({ ...c, at: Math.min(c.at ?? t.content.length, t.content.length) }))
+    .map((c) => ({
+      ...c,
+      at: Math.min(c.at ?? t.content.length, t.content.length),
+    }))
     .sort((a, b) => a.at - b.at);
   const out: (string | ShownCall)[] = [];
   let from = 0;
@@ -149,9 +203,7 @@ function ToolCard({ call: c, running }: { call: ShownCall; running: boolean }) {
             {r.server && <span className="tool-server"> · {r.server}</span>}
           </span>
         ) : running ? (
-          <span className="shimmer">
-            Using {c.name || "a tool"}…
-          </span>
+          <span className="shimmer">Using {c.name || "a tool"}…</span>
         ) : (
           <span>Tried to use {name}</span>
         )}
@@ -165,7 +217,9 @@ function ToolCard({ call: c, running }: { call: ShownCall; running: boolean }) {
           </p>
         )}
         {c.raw !== undefined ||
-        (c.arguments && typeof c.arguments === "object" && Object.keys(c.arguments).length) ? (
+        (c.arguments &&
+          typeof c.arguments === "object" &&
+          Object.keys(c.arguments).length) ? (
           <>
             <p className="tool-label">Asked with</p>
             <pre>{c.raw ?? JSON.stringify(c.arguments, null, 2)}</pre>
@@ -173,7 +227,9 @@ function ToolCard({ call: c, running }: { call: ShownCall; running: boolean }) {
         ) : null}
         {r && (
           <>
-            <p className="tool-label">{r.isError ? "What went wrong" : "Got back"}</p>
+            <p className="tool-label">
+              {r.isError ? "What went wrong" : "Got back"}
+            </p>
             <pre>{r.content || "(nothing)"}</pre>
           </>
         )}
@@ -223,6 +279,14 @@ function wire(turns: Turn[], instructions?: string): ChatMessage[] {
             ? `Error: ${c.result!.content}`
             : c.result!.content,
         });
+    }
+    if (t.media) {
+      // Chat models can't see what was made; tell them what it was.
+      out.push({
+        role: "assistant",
+        content: `(Made a ${t.media.kind === "video" ? "video" : "picture"} with ${t.media.modelName}: "${t.media.prompt}")`,
+      });
+      continue;
     }
     const content = fullText(t);
     if (t.error && !content) continue;
@@ -305,10 +369,22 @@ export function ChatPage({
     [remote, admin, state?.state],
     30000,
   );
+  // Picture and video models. Hosts before them answer with an error.
+  const mediaList = useLoad<MediaModel[]>(
+    () => remote.mediaModels().catch(() => []),
+    [remote],
+    30000,
+  );
+  const mediaModels = mediaList.value ?? [];
   const [modelId, setModelId] = useState(loadModelChoice);
   const models = chatModels.value ?? [];
-  const model = models.find((m) => m.id === modelId) ?? models[0] ?? null;
-  const ready = !!model;
+  const media = modelId.startsWith("media:")
+    ? (mediaModels.find((m) => `media:${m.id}` === modelId) ?? null)
+    : null;
+  const model = media
+    ? null
+    : (models.find((m) => m.id === modelId) ?? models[0] ?? null);
+  const ready = !!model || !!media;
   const loading =
     state?.state === "loading" || state?.state === "installingRuntime";
   const pickModel = (id: string) => {
@@ -356,6 +432,12 @@ export function ChatPage({
     setPrefsState(p);
     savePrefs(p);
   };
+  const [mediaPrefs, setMediaPrefsState] = useState<MediaPrefs>(loadMediaPrefs);
+  const setMediaPrefs = (p: MediaPrefs) => {
+    setMediaPrefsState(p);
+    saveMediaPrefs(p);
+  };
+  const [zoom, setZoom] = useState<GeneratedMedia | null>(null);
 
   // ----- layout -----
   const [navOpen, setNavOpen] = useState(false);
@@ -530,16 +612,122 @@ export function ChatPage({
     }
   }
 
+  /** Makes a picture or video from the last message, with the picked model. */
+  async function make(history: Turn[], chatId: string, with_: MediaModel) {
+    const user = history[history.length - 1];
+    const picture = user?.attachments?.find((a) => a.type === "image");
+    const d = with_.defaults;
+    const { width, height } = sizeFor(mediaPrefs.shape, d.width, d.height);
+    const video = with_.kind === "video";
+    const fps = d.fps ?? 16;
+    const request: MediaRequest = {
+      model: with_.id,
+      prompt: user?.content.trim() || "A picture like this one",
+      width,
+      height,
+      ...(mediaPrefs.steps ? { steps: mediaPrefs.steps } : {}),
+      ...(mediaPrefs.cfgScale !== undefined
+        ? { cfgScale: mediaPrefs.cfgScale }
+        : {}),
+      ...(mediaPrefs.seed !== undefined ? { seed: mediaPrefs.seed } : {}),
+      ...(mediaPrefs.negativePrompt?.trim()
+        ? { negativePrompt: mediaPrefs.negativePrompt.trim() }
+        : {}),
+      ...(video && mediaPrefs.seconds
+        ? { frames: Math.round(mediaPrefs.seconds * fps) + 1, fps }
+        : {}),
+      ...(picture && picture.type === "image"
+        ? {
+            image: picture.data,
+            ...(mediaPrefs.strength !== undefined
+              ? { strength: mediaPrefs.strength }
+              : {}),
+          }
+        : {}),
+    };
+    const placeholder: Turn = {
+      role: "assistant",
+      content: "",
+      making: {
+        event: { kind: "progress", stage: "loading", step: 0, steps: 0 },
+        kind: with_.kind,
+        width,
+        height,
+        startedAt: Date.now(),
+      },
+    };
+    let current = placeholder;
+    const update = (f: (t: Turn) => Turn) => {
+      current = f(current);
+      const snapshot = current;
+      setTurns((all) => [...all.slice(0, -1), snapshot]);
+    };
+    setTurns([...history, placeholder]);
+    setBusy(true);
+    const controller = new AbortController();
+    abort.current = controller;
+    replyId.current = `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    try {
+      const result = await remote.generate(
+        request,
+        (e: MediaEvent) =>
+          update((t) =>
+            t.making ? { ...t, making: { ...t.making, event: e } } : t,
+          ),
+        controller.signal,
+        { replyId: replyId.current },
+      );
+      update((t) => ({ ...t, making: undefined, media: result }));
+    } catch (e) {
+      if (e instanceof HostReplyError && e.status === 401) fail(e);
+      update((t) => ({
+        ...t,
+        making: undefined,
+        error: controller.signal.aborted ? "Stopped." : errorText(e),
+      }));
+    } finally {
+      abort.current = null;
+      replyId.current = null;
+      setBusy(false);
+      persist(chatId, [...history, current], {
+        instructions: instructions || undefined,
+      });
+    }
+  }
+
+  /** Answers with the chat model, or makes something with a picture model. */
+  function reply(history: Turn[], chatId: string) {
+    if (media) make(history, chatId, media);
+    else ask(history, chatId);
+  }
+
   const reading = drafts.some((d) => d.status === "reading");
   const ready_drafts = drafts.filter(
     (d) => d.status === "ready" && d.attachment,
   );
   const hasPictures = ready_drafts.some((d) => d.kind === "image");
   const blind = hasPictures && model && !model.vision;
+  /** Why the attachments don't suit the picked picture or video model. */
+  const mediaProblem = !media
+    ? null
+    : ready_drafts.some((d) => d.kind === "file")
+      ? `${media.name} only takes a picture to start from, not documents.`
+      : ready_drafts.length > 1
+        ? "Attach one picture to start from."
+        : hasPictures && media.kind === "video" && !media.pictureInput
+          ? `${media.name} makes videos from a description only. Remove the picture, or pick a video model that starts from one.`
+          : null;
 
   function send(text = input) {
     text = text.trim();
-    if ((!text && !ready_drafts.length) || busy || !ready || reading || blind)
+    if (
+      (!text && !ready_drafts.length) ||
+      busy ||
+      !ready ||
+      reading ||
+      blind ||
+      mediaProblem
+    )
       return;
     const id = activeId ?? newId();
     if (!activeId) setActiveId(id);
@@ -553,7 +741,7 @@ export function ChatPage({
     setInput("");
     setDrafts([]);
     setEditing(null);
-    ask([...turns.filter((t) => !(t.error && !t.content)), user], id);
+    reply([...turns.filter((t) => !(t.error && !t.content)), user], id);
   }
 
   function regenerate(index = turns.length - 1) {
@@ -562,7 +750,7 @@ export function ChatPage({
       .filter((t) => !(t.error && !t.content));
     while (history.length && history[history.length - 1].role === "assistant")
       history.pop();
-    if (history.length && activeId) ask(history, activeId);
+    if (history.length && activeId) reply(history, activeId);
   }
 
   function resend(index: number, text: string) {
@@ -573,7 +761,7 @@ export function ChatPage({
       { ...original, content: text.trim() },
     ];
     setEditing(null);
-    ask(history, activeId);
+    reply(history, activeId);
   }
 
   function continueReply() {
@@ -636,7 +824,8 @@ export function ChatPage({
         setNavOpen(true);
         setTimeout(() => search.current?.focus(), 0);
       } else if (e.key === "Escape") {
-        if (menu) setMenu(null);
+        if (zoom) setZoom(null);
+        else if (menu) setMenu(null);
         else if (tuneOpen) setTuneOpen(false);
         else if (busy) stop();
       }
@@ -683,9 +872,17 @@ export function ChatPage({
     ? loading
       ? "Starting the model…"
       : "No model is running yet"
-    : model?.cloud
-      ? `Message ${model.name}`
-      : `Ask ${paired.hostName}`;
+    : media
+      ? media.kind === "video"
+        ? hasPictures
+          ? "Describe how the picture should move"
+          : "Describe a video to make"
+        : hasPictures
+          ? "Describe how to change the picture"
+          : "Describe a picture to make"
+      : model?.cloud
+        ? `Message ${model.name}`
+        : `Ask ${paired.hostName}`;
 
   const composer = (
     <form
@@ -764,6 +961,7 @@ export function ChatPage({
           }
         }}
       />
+      {mediaProblem && <div className="composer-note warn">{mediaProblem}</div>}
       {blind && (
         <div className="composer-note warn">
           {model?.name} can't see pictures.{" "}
@@ -778,36 +976,51 @@ export function ChatPage({
         <button
           type="button"
           className="round"
-          aria-label="Attach pictures or files"
-          title="Attach pictures, PDFs or files"
+          aria-label={
+            media
+              ? "Attach a picture to start from"
+              : "Attach pictures or files"
+          }
+          title={
+            media
+              ? "Attach a picture to start from"
+              : "Attach pictures, PDFs or files"
+          }
           disabled={!ready || drafts.length >= MAX_ATTACHMENTS}
           onClick={() => files.current?.click()}
         >
           <Icon name="plus" size={20} />
         </button>
-        <button
-          type="button"
-          className={`chip ${(prefs.reasoning ?? defaults.reasoning) ? "on" : ""}`}
-          title="Whether reasoning models think before answering"
-          onClick={() =>
-            setPrefs({
-              ...prefs,
-              reasoning:
-                prefs.reasoning === undefined
-                  ? false
-                  : prefs.reasoning === false
-                    ? true
-                    : undefined,
-            })
-          }
-        >
-          <Icon name="brain" size={16} />
-          {(prefs.reasoning ?? defaults.reasoning) === undefined
-            ? "Think: auto"
-            : (prefs.reasoning ?? defaults.reasoning)
-              ? "Think: on"
-              : "Think: off"}
-        </button>
+        {media ? (
+          <ShapeChip
+            shape={mediaPrefs.shape}
+            onChange={(shape) => setMediaPrefs({ ...mediaPrefs, shape })}
+          />
+        ) : (
+          <button
+            type="button"
+            className={`chip ${(prefs.reasoning ?? defaults.reasoning) ? "on" : ""}`}
+            title="Whether reasoning models think before answering"
+            onClick={() =>
+              setPrefs({
+                ...prefs,
+                reasoning:
+                  prefs.reasoning === undefined
+                    ? false
+                    : prefs.reasoning === false
+                      ? true
+                      : undefined,
+              })
+            }
+          >
+            <Icon name="brain" size={16} />
+            {(prefs.reasoning ?? defaults.reasoning) === undefined
+              ? "Think: auto"
+              : (prefs.reasoning ?? defaults.reasoning)
+                ? "Think: on"
+                : "Think: off"}
+          </button>
+        )}
         <button
           type="button"
           className={`chip ${tuneOpen ? "on" : ""}`}
@@ -815,11 +1028,13 @@ export function ChatPage({
           title="Model settings"
         >
           <Icon name="sliders" size={16} />
-          {prefs.style && prefs.style !== "custom"
-            ? STYLES[prefs.style].label
-            : prefs.temperature !== undefined
-              ? `Temp ${prefs.temperature}`
-              : "Settings"}
+          {media
+            ? "Settings"
+            : prefs.style && prefs.style !== "custom"
+              ? STYLES[prefs.style].label
+              : prefs.temperature !== undefined
+                ? `Temp ${prefs.temperature}`
+                : "Settings"}
         </button>
         <span className="grow" />
         {busy ? (
@@ -840,6 +1055,7 @@ export function ChatPage({
               !ready ||
               reading ||
               !!blind ||
+              !!mediaProblem ||
               (!input.trim() && !ready_drafts.length)
             }
           >
@@ -1100,11 +1316,25 @@ export function ChatPage({
               <span
                 className={`dot ${ready ? (cloud ? "cloud" : "on") : loading ? "wait" : "off"}`}
               />
+              {media && (
+                <Icon
+                  name={media.kind === "video" ? "video" : "image"}
+                  size={16}
+                />
+              )}
               <span className="pill-text">
                 <strong>
-                  {model?.name ?? (loading ? "Starting…" : "No model")}
+                  {media?.name ??
+                    model?.name ??
+                    (loading ? "Starting…" : "No model")}
                 </strong>
-                <small>{model?.cloud ? model.provider : paired.hostName}</small>
+                <small>
+                  {media
+                    ? `${media.kind === "video" ? "Videos" : "Pictures"} · ${paired.hostName}`
+                    : model?.cloud
+                      ? model.provider
+                      : paired.hostName}
+                </small>
               </span>
               <Icon name="chevronDown" size={16} />
             </button>
@@ -1150,6 +1380,28 @@ export function ChatPage({
                         {m.mmproj && <span className="tag">Vision</span>}
                       </button>
                     ))}
+                {(["image", "video"] as const).map((kind) =>
+                  mediaModels.some((m) => m.kind === kind) ? (
+                    <div key={kind}>
+                      <h5>
+                        {kind === "image" ? "Make pictures" : "Make videos"}
+                      </h5>
+                      {mediaModels
+                        .filter((m) => m.kind === kind)
+                        .map((m) => (
+                          <MediaRow
+                            key={m.id}
+                            m={m}
+                            on={m.id === media?.id}
+                            onPick={() => (
+                              pickModel(`media:${m.id}`),
+                              setMenu(null)
+                            )}
+                          />
+                        ))}
+                    </div>
+                  ) : null,
+                )}
                 {models.some((m) => m.cloud) && <h5>Cloud</h5>}
                 {models
                   .filter((m) => m.cloud)
@@ -1166,6 +1418,12 @@ export function ChatPage({
                     <button onClick={() => onManage("models")}>
                       <Icon name="download" size={16} /> Get more models
                     </button>
+                    {mediaModels.length === 0 && (
+                      <button onClick={() => onManage("models")}>
+                        <Icon name="image" size={16} /> Get picture and video
+                        models
+                      </button>
+                    )}
                     <button onClick={() => onManage("providers")}>
                       <Icon name="globe" size={16} /> Connect a cloud provider
                     </button>
@@ -1206,22 +1464,28 @@ export function ChatPage({
             <div className="welcome-hero">
               <span className="orb big" />
               <h1>
-                {ready
-                  ? greeting()
-                  : loading
-                    ? "Starting your model…"
-                    : "Almost there"}
+                {media
+                  ? media.kind === "video"
+                    ? "What should move?"
+                    : "What should I make?"
+                  : ready
+                    ? greeting()
+                    : loading
+                      ? "Starting your model…"
+                      : "Almost there"}
               </h1>
               <p className="lede">
-                {ready
-                  ? cloud
-                    ? `Chatting with ${model!.name} from ${model!.provider}.`
-                    : `What can I help with? Everything stays on ${paired.hostName}.`
-                  : loading
-                    ? stateText(state)
-                    : admin
-                      ? "Download a model to run on this computer, or connect a cloud provider."
-                      : "An admin needs to start a model before you can chat."}
+                {media
+                  ? `${media.name} makes ${media.kind === "video" ? "short videos" : "pictures"} on ${paired.hostName}, privately.${media.kind === "video" || media.pictureInput ? "" : " Attach a picture to change it."}${media.kind === "video" && media.pictureInput ? " Attach a picture to set it in motion." : ""}`
+                  : ready
+                    ? cloud
+                      ? `Chatting with ${model!.name} from ${model!.provider}.`
+                      : `What can I help with? Everything stays on ${paired.hostName}.`
+                    : loading
+                      ? stateText(state)
+                      : admin
+                        ? "Download a model to run on this computer, or connect a cloud provider."
+                        : "An admin needs to start a model before you can chat."}
               </p>
               {!ready && !loading && admin && (
                 <div className="hero-actions">
@@ -1240,7 +1504,12 @@ export function ChatPage({
                 <>
                   {composer}
                   <div className="cards">
-                    {SUGGESTIONS.map((s) => (
+                    {(media
+                      ? media.kind === "video"
+                        ? VIDEO_IDEAS
+                        : PICTURE_IDEAS
+                      : SUGGESTIONS
+                    ).map((s) => (
                       <button
                         key={s.title}
                         className="card-suggest glass"
@@ -1350,6 +1619,41 @@ export function ChatPage({
                           <div className="thought-body">{t.reasoning}</div>
                         </details>
                       )}
+                      {t.making && <Making making={t.making} />}
+                      {t.media && (
+                        <MediaResult
+                          m={t.media}
+                          onZoom={() => setZoom(t.media!)}
+                          onAgain={
+                            i === turns.length - 1 && ready && !busy
+                              ? () => regenerate()
+                              : undefined
+                          }
+                          onStartFrom={
+                            t.media.kind === "image" && !busy
+                              ? () => {
+                                  const m = t.media!;
+                                  setDrafts([
+                                    {
+                                      id: newId(),
+                                      name: "Made picture.png",
+                                      kind: "image",
+                                      status: "ready",
+                                      preview: `data:${m.mime};base64,${m.data}`,
+                                      attachment: {
+                                        type: "image",
+                                        name: "Made picture.png",
+                                        mime: m.mime,
+                                        data: m.data,
+                                      },
+                                    },
+                                  ]);
+                                  box.current?.focus();
+                                }
+                              : undefined
+                          }
+                        />
+                      )}
                       {answerPieces(t).map((p, k) =>
                         typeof p === "string" ? (
                           <Markdown key={k} text={p} />
@@ -1361,7 +1665,10 @@ export function ChatPage({
                           />
                         ),
                       )}
-                      {busy && i === turns.length - 1 && waiting(t) ? (
+                      {busy &&
+                      i === turns.length - 1 &&
+                      !t.making &&
+                      waiting(t) ? (
                         <span className="typing">
                           <i />
                           <i />
@@ -1472,9 +1779,11 @@ export function ChatPage({
         )}
         <p className="fine-print">
           <Icon name={cloud ? "globe" : "lock"} size={12} />
-          {cloud
-            ? `Messages in this chat go to ${model!.provider}. Answers can be wrong.`
-            : `Runs privately on ${paired.hostName}. Answers can be wrong.`}
+          {media
+            ? `Made privately on ${paired.hostName}. ${media.kind === "video" ? "Videos" : "Pictures"} can get details wrong.`
+            : cloud
+              ? `Messages in this chat go to ${model!.provider}. Answers can be wrong.`
+              : `Runs privately on ${paired.hostName}. Answers can be wrong.`}
         </p>
         {dragging && (
           <div className="drop-zone">
@@ -1492,20 +1801,43 @@ export function ChatPage({
         aria-label="Model settings"
         aria-hidden={!tuneOpen}
       >
-        <TunePanel
-          prefs={prefs}
-          defaults={defaults}
-          setPrefs={setPrefs}
-          cloud={!!cloud}
-          instructions={instructions}
-          setInstructions={(v) => {
-            setInstructions(v);
-            if (activeId && chats.some((c) => c.id === activeId))
-              updateChat(activeId, { instructions: v || undefined });
-          }}
-          onClose={() => setTuneOpen(false)}
-        />
+        {media ? (
+          <MediaTunePanel
+            model={media}
+            prefs={mediaPrefs}
+            setPrefs={setMediaPrefs}
+            onClose={() => setTuneOpen(false)}
+          />
+        ) : (
+          <TunePanel
+            prefs={prefs}
+            defaults={defaults}
+            setPrefs={setPrefs}
+            cloud={!!cloud}
+            instructions={instructions}
+            setInstructions={(v) => {
+              setInstructions(v);
+              if (activeId && chats.some((c) => c.id === activeId))
+                updateChat(activeId, { instructions: v || undefined });
+            }}
+            onClose={() => setTuneOpen(false)}
+          />
+        )}
       </aside>
+      {zoom && (
+        <div
+          className="lightbox"
+          role="dialog"
+          aria-label={zoom.prompt}
+          onClick={() => setZoom(null)}
+        >
+          <img
+            src={`data:${zoom.mime};base64,${zoom.data}`}
+            alt={zoom.prompt}
+          />
+          <p>{zoom.prompt}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -1844,6 +2176,376 @@ function TunePanel({
         <small>
           Saved in this browser. Admins set the defaults in Settings.
         </small>
+      </div>
+    </div>
+  );
+}
+
+function MediaRow({
+  m,
+  on,
+  onPick,
+}: {
+  m: MediaModel;
+  on: boolean;
+  onPick: () => void;
+}) {
+  return (
+    <button
+      className={`model-row ${on ? "on" : ""}`}
+      onClick={onPick}
+      role="menuitemradio"
+      aria-checked={on}
+    >
+      <span className="model-row-text">
+        <strong>{m.name}</strong>
+        <small>
+          {m.kind === "video"
+            ? `Short videos · ${m.defaults.width}×${m.defaults.height}${m.pictureInput ? " · from a picture too" : ""}`
+            : `Pictures · ${m.defaults.width}×${m.defaults.height}`}
+        </small>
+      </span>
+      <span className="tag">{m.kind === "video" ? "Video" : "Picture"}</span>
+      {on && <Icon name="check" size={16} />}
+    </button>
+  );
+}
+
+const SHAPES: { shape: Shape | undefined; label: string }[] = [
+  { shape: undefined, label: "Model's size" },
+  { shape: "square", label: "Square" },
+  { shape: "portrait", label: "Portrait" },
+  { shape: "landscape", label: "Landscape" },
+];
+
+/** Picks the shape of what's made, cycling through the options. */
+function ShapeChip({
+  shape,
+  onChange,
+}: {
+  shape: Shape | undefined;
+  onChange: (s: Shape | undefined) => void;
+}) {
+  const i = SHAPES.findIndex((s) => s.shape === shape);
+  return (
+    <button
+      type="button"
+      className={`chip ${shape ? "on" : ""}`}
+      title="Shape of the picture or video"
+      onClick={() => onChange(SHAPES[(i + 1) % SHAPES.length].shape)}
+    >
+      <span className={`shape-glyph ${shape ?? "auto"}`} aria-hidden />
+      {SHAPES[Math.max(0, i)].label}
+    </button>
+  );
+}
+
+function makingText(e: MediaEvent, video: boolean): string {
+  switch (e.kind) {
+    case "queued":
+      return "Waiting for another picture or video to finish…";
+    case "installing":
+      return e.total
+        ? `Getting ready the first time: downloading stable-diffusion.cpp (${Math.round((e.done / e.total) * 100)}%)…`
+        : "Getting ready the first time: downloading stable-diffusion.cpp…";
+    case "progress":
+      if (e.stage === "loading") return "Loading the model…";
+      if (e.stage === "finishing")
+        return video ? "Putting the frames together…" : "Finishing…";
+      return `${video ? "Making the video" : "Drawing"}… step ${e.step} of ${e.steps}`;
+  }
+}
+
+/** A picture or video on its way: its shape, shimmering, with progress. */
+function Making({ making }: { making: NonNullable<Turn["making"]> }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const e = making.event;
+  const pct =
+    e.kind === "progress" && e.steps > 0
+      ? (e.step / e.steps) * 100
+      : e.kind === "installing" && e.total
+        ? (e.done / e.total) * 100
+        : null;
+  const seconds = Math.max(0, Math.round((now - making.startedAt) / 1000));
+  return (
+    <div className="making">
+      <div
+        className="making-canvas"
+        style={{ aspectRatio: `${making.width} / ${making.height}` }}
+      >
+        <Icon name={making.kind === "video" ? "video" : "image"} size={28} />
+      </div>
+      <div className="making-text">
+        <span className="shimmer">
+          {makingText(e, making.kind === "video")}
+        </span>
+        <small>
+          {seconds < 60
+            ? `${seconds}s`
+            : `${Math.floor(seconds / 60)}m ${seconds % 60}s`}
+        </small>
+      </div>
+      <div className="making-bar" aria-hidden>
+        <i
+          className={pct === null ? "indeterminate" : ""}
+          style={pct === null ? undefined : { width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function saveMedia(m: GeneratedMedia) {
+  const bytes = Uint8Array.from(atob(m.data), (c) => c.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: m.mime }));
+  const a = document.createElement("a");
+  a.href = url;
+  const name =
+    m.prompt
+      .replace(/[^\w -]+/g, "")
+      .trim()
+      .split(/\s+/)
+      .slice(0, 6)
+      .join("-")
+      .toLowerCase() || "brainwashed";
+  a.download = `${name}.${m.mime === "image/webp" ? "webp" : "png"}`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function MediaResult({
+  m,
+  onZoom,
+  onAgain,
+  onStartFrom,
+}: {
+  m: GeneratedMedia;
+  onZoom: () => void;
+  onAgain?: () => void;
+  onStartFrom?: () => void;
+}) {
+  const video = m.kind === "video";
+  const length =
+    video && m.frames && m.fps ? `${(m.frames / m.fps).toFixed(1)}s · ` : "";
+  return (
+    <figure className="media-result">
+      <button
+        className="media-frame"
+        onClick={onZoom}
+        aria-label="Show it bigger"
+        style={{ aspectRatio: `${m.width} / ${m.height}` }}
+      >
+        <img src={`data:${m.mime};base64,${m.data}`} alt={m.prompt} />
+        {video && (
+          <span className="media-badge">
+            <Icon name="video" size={12} /> Video
+          </span>
+        )}
+      </button>
+      <figcaption>
+        {m.modelName} · {m.width}×{m.height} · {length}seed {m.seed} ·{" "}
+        {m.seconds < 90
+          ? `${Math.round(m.seconds)}s`
+          : `${Math.round(m.seconds / 60)} min`}
+      </figcaption>
+      <div className="msg-actions">
+        <button
+          aria-label="Download"
+          title={video ? "Download (animated WebP)" : "Download"}
+          onClick={() => saveMedia(m)}
+        >
+          <Icon name="download" size={16} />
+        </button>
+        <CopyIcon text={m.prompt} />
+        {onStartFrom && (
+          <button
+            aria-label="Start from this picture"
+            title="Change this picture, or set it in motion with a video model"
+            onClick={onStartFrom}
+          >
+            <Icon name="wand" size={16} />
+          </button>
+        )}
+        {onAgain && (
+          <button
+            aria-label="Make another"
+            title="Make another"
+            onClick={onAgain}
+          >
+            <Icon name="refresh" size={16} />
+          </button>
+        )}
+      </div>
+    </figure>
+  );
+}
+
+function MediaTunePanel({
+  model,
+  prefs,
+  setPrefs,
+  onClose,
+}: {
+  model: MediaModel;
+  prefs: MediaPrefs;
+  setPrefs: (p: MediaPrefs) => void;
+  onClose: () => void;
+}) {
+  const set = (patch: Partial<MediaPrefs>) => setPrefs({ ...prefs, ...patch });
+  const d = model.defaults;
+  const video = model.kind === "video";
+  const size = sizeFor(prefs.shape, d.width, d.height);
+  const fps = d.fps ?? 16;
+  const defaultSeconds = d.frames ? (d.frames - 1) / fps : 2;
+  return (
+    <div className="tune-inner">
+      <div className="tune-head">
+        <h3>{video ? "Video settings" : "Picture settings"}</h3>
+        <button className="icon-btn" aria-label="Close" onClick={onClose}>
+          <Icon name="close" />
+        </button>
+      </div>
+
+      <Field label="Shape" hint={`${size.width} × ${size.height} pixels`}>
+        <div className="segmented">
+          {SHAPES.map((s) => (
+            <button
+              key={s.label}
+              className={prefs.shape === s.shape ? "on" : ""}
+              onClick={() => set({ shape: s.shape })}
+            >
+              {s.shape ? s.label : "Default"}
+            </button>
+          ))}
+        </div>
+      </Field>
+
+      {video && (
+        <Field
+          label="Length"
+          hint="Longer videos take much longer and need more memory."
+        >
+          <div className="slider-row">
+            <input
+              type="range"
+              min={1}
+              max={5}
+              step={0.5}
+              value={prefs.seconds ?? defaultSeconds}
+              onChange={(e) => set({ seconds: Number(e.target.value) })}
+              aria-label="Length in seconds"
+            />
+            <output>
+              {(prefs.seconds ?? defaultSeconds).toFixed(1)}s
+              {prefs.seconds === undefined ? " (default)" : ""}
+            </output>
+          </div>
+        </Field>
+      )}
+
+      <Field
+        label="Steps"
+        hint="More steps add detail but take longer. Turbo models need only a few."
+      >
+        <div className="slider-row">
+          <input
+            type="range"
+            min={1}
+            max={Math.max(50, d.steps * 2)}
+            step={1}
+            value={prefs.steps ?? d.steps}
+            onChange={(e) => set({ steps: Number(e.target.value) })}
+            aria-label="Steps"
+          />
+          <output>{prefs.steps ?? `${d.steps} (default)`}</output>
+        </div>
+      </Field>
+
+      <Field
+        label="Follow the description"
+        hint="How closely to stick to the words (guidance). Distilled models like FLUX schnell and Z-Image Turbo want 1."
+      >
+        <div className="slider-row">
+          <input
+            type="range"
+            min={0}
+            max={15}
+            step={0.5}
+            value={prefs.cfgScale ?? d.cfgScale}
+            onChange={(e) => set({ cfgScale: Number(e.target.value) })}
+            aria-label="Guidance"
+          />
+          <output>
+            {prefs.cfgScale?.toFixed(1) ?? `${d.cfgScale.toFixed(1)} (default)`}
+          </output>
+        </div>
+      </Field>
+
+      <Field
+        label="Starting picture"
+        hint="When you attach a picture: how much of it to change."
+      >
+        <div className="slider-row">
+          <input
+            type="range"
+            min={0.1}
+            max={1}
+            step={0.05}
+            value={prefs.strength ?? 0.75}
+            onChange={(e) => set({ strength: Number(e.target.value) })}
+            aria-label="How much to change"
+            disabled={video}
+          />
+          <output>
+            {video
+              ? "Videos keep it"
+              : `${Math.round((prefs.strength ?? 0.75) * 100)}%`}
+          </output>
+        </div>
+      </Field>
+
+      <Field
+        label="Leave out"
+        hint="Things you don't want to see (negative prompt)."
+      >
+        <textarea
+          className="instructions"
+          rows={2}
+          placeholder={
+            d.negativePrompt && /^[\x00-\x7f]*$/.test(d.negativePrompt)
+              ? d.negativePrompt
+              : "For example: blurry, text, extra fingers"
+          }
+          value={prefs.negativePrompt ?? ""}
+          onChange={(e) => set({ negativePrompt: e.target.value || undefined })}
+        />
+      </Field>
+
+      <Field
+        label="Seed"
+        hint="The same seed and words make the same picture. Empty picks a new one each time."
+      >
+        <div className="num-grid">
+          <NumberAuto
+            label="Seed"
+            value={prefs.seed}
+            onChange={(v) =>
+              set({ seed: v === undefined ? undefined : Math.round(v) })
+            }
+            step={1}
+            min={0}
+            max={2 ** 31}
+          />
+        </div>
+      </Field>
+
+      <div className="tune-foot">
+        <button onClick={() => setPrefs({})}>Reset to defaults</button>
+        <small>Saved in this browser, for every picture and video model.</small>
       </div>
     </div>
   );

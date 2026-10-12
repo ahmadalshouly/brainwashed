@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+base64 = "0.22"
 brainwashed-runtime = { path = "../runtime" }
 brainwashed-mcp = { path = "../mcp" }
 brainwashed-skills = { path = "../skills" }

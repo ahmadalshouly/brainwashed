@@ -17,8 +17,10 @@ Make one key per app, so you can revoke it on its own under **API**. A key made 
 
 | Call | What it does |
 |---|---|
-| `GET /v1/models` | The models the key can use: `local` for the model running on the computer, and `<provider>/<model>` for cloud models. |
+| `GET /v1/models` | The models the key can use: `local` for the model running on the computer, `<provider>/<model>` for cloud models, and the installed picture and video models (with `"kind": "image"` or `"video"`). |
 | `POST /v1/chat/completions` | A chat reply, whole or streamed (`"stream": true`). |
+| `POST /v1/images/generations` | A picture from a description, made by a picture model installed on the computer. |
+| `POST /v1/videos` | Starts a short video; `GET /v1/videos/{id}` tells how it's going, `GET /v1/videos/{id}/content` downloads it, `DELETE /v1/videos/{id}` stops or forgets it. |
 
 Every call needs `Authorization: Bearer <key>`. The API allows calls from web pages on other sites (CORS), since a page needs the key to do anything.
 
@@ -34,11 +36,34 @@ Request fields:
 
 Your `system` message is added after BrainWashed's own system prompt and skills; it doesn't replace them.
 
-Not supported: tool and function calls, `n` other than 1, `logprobs`, and audio. Unknown fields are ignored.
+Not supported: tool and function calls, `n` other than 1, `logprobs`, audio, and picture edits (`/v1/images/edits`). Unknown fields are ignored.
 
 Some models are trained to call tools and do so even when none are offered. BrainWashed takes that markup out of the answer: a call that only asks the user a question (`ask_user` and similar) comes back as ordinary text (the question, then each option on a `- ` line), and any other call comes back in `tool_calls` with `finish_reason: "tool_calls"`, so it never shows up as raw tokens. Nothing runs these calls.
 
 Replies follow OpenAI's format. A thinking model's thoughts come in `reasoning_content` (in `message` or in each streamed `delta`), as llama.cpp and DeepSeek do. `finish_reason` is `length` when the reply hit `max_tokens`. Errors look like `{ "error": { "message", "type", "code" } }`, with 401 for a missing or revoked key, 404 for an unknown model, and 400 for a bad request.
+
+### Pictures
+
+`POST /v1/images/generations` follows OpenAI's format. Install a picture model first under **Models → Pictures and videos**.
+
+- `prompt`: what to draw.
+- `model`: an id from `/v1/models` with `"kind": "image"`. Left out, the first installed picture model draws.
+- `size`: `"1024x1024"`, `"1536x1024"`... (rounded to a multiple of 16). Left out or `"auto"`, the model's own size.
+- `n`: only 1.
+- `response_format`: `b64_json` (the default) or `url`, which comes back as a `data:image/png;base64,…` URL, since nothing is hosted.
+- BrainWashed's own: `negative_prompt`, `steps`, `cfg_scale` and `seed`.
+
+The call answers when the picture is done, which takes seconds to minutes depending on the model and the computer. The reply is `{ created, data: [{ b64_json, revised_prompt, seed }], size, output_format: "png" }`. One picture or video is made at a time; others wait their turn.
+
+### Videos
+
+`POST /v1/videos` follows OpenAI's video API: it answers at once with a job, `{ id, object: "video", status, progress, model, prompt, size, created_at, completed_at }`, plus `seconds` and `seed` once it's done, where `status` is `queued`, `in_progress`, `completed` or `failed` (with `error`). Ask `GET /v1/videos/{id}` until it's `completed`, then fetch `GET /v1/videos/{id}/content`, an animated WebP (`image/webp`) that browsers, `<img>` tags and most image viewers play.
+
+- `prompt`, `model` (an id with `"kind": "video"`) and `size` as for pictures.
+- `seconds`: the length, `"2"` or `2`. Left out, the model's own (about 2 seconds).
+- BrainWashed's own: `negative_prompt`, `frames` and `fps` (instead of `seconds`), `steps`, `seed`, and `image`, a picture to set in motion as a data URL or base64 (for video models that take one, such as Wan 2.2 5B).
+
+The host keeps the last 16 videos until it restarts, each visible only to the key that made it. `DELETE /v1/videos/{id}` stops one that's still being made.
 
 ## Examples
 

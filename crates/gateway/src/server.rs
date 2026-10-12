@@ -130,7 +130,9 @@ pub(crate) struct Inner {
     pub(crate) stop_requested: tokio::sync::Notify,
     events: broadcast::Sender<GatewayEvent>,
     /// Recent chat replies, so a phone that dropped off can resume one.
-    replies: Replies,
+    pub(crate) replies: Replies,
+    /// Videos made through the API.
+    pub(crate) video_jobs: crate::media::VideoJobs,
 }
 
 struct Running {
@@ -153,6 +155,7 @@ impl Gateway {
                 offers: Mutex::new(HashMap::new()),
                 seen_nonces: Mutex::new(VecDeque::new()),
                 replies: Replies::default(),
+                video_jobs: Default::default(),
                 running: Mutex::new(None),
                 relay_url: Mutex::new(None),
                 relay: Mutex::new(None),
@@ -494,6 +497,28 @@ impl Gateway {
                     .options(crate::openai::preflight)
                     .layer(DefaultBodyLimit::max(MAX_RPC_BODY)),
             )
+            .route(
+                "/v1/images/generations",
+                post(crate::media::images)
+                    .options(crate::openai::preflight)
+                    .layer(DefaultBodyLimit::max(MAX_RPC_BODY)),
+            )
+            .route(
+                "/v1/videos",
+                post(crate::media::create_video)
+                    .options(crate::openai::preflight)
+                    .layer(DefaultBodyLimit::max(MAX_RPC_BODY)),
+            )
+            .route(
+                "/v1/videos/{id}",
+                get(crate::media::get_video)
+                    .delete(crate::media::delete_video)
+                    .options(crate::openai::preflight),
+            )
+            .route(
+                "/v1/videos/{id}/content",
+                get(crate::media::video_content).options(crate::openai::preflight),
+            )
             .route("/control/status", get(crate::control::status))
             .route("/control/admin-link", post(crate::control::admin_link))
             .route("/control/stop", post(crate::control::stop))
@@ -619,7 +644,7 @@ pub(crate) fn percent_encode(s: &str) -> String {
         .collect()
 }
 
-fn reject(status: StatusCode, msg: &str) -> Response {
+pub(crate) fn reject(status: StatusCode, msg: &str) -> Response {
     (status, Json(json!({ "error": msg }))).into_response()
 }
 
@@ -764,6 +789,9 @@ async fn rpc(State(gw): State<Gateway>, Json(req): Json<RpcRequest>) -> Response
         let admin = device.role == DeviceRole::Admin;
         return chat(gw, &device.id, device_key, admin, call.params);
     }
+    if call.method == "generate" {
+        return crate::media::generate(gw, &device.id, device_key, call.params);
+    }
     if call.method == "chatResume" {
         return chat_resume(gw, &device.id, device_key, call.params);
     }
@@ -892,7 +920,7 @@ fn chat(
     )
 }
 
-struct StopOnDrop(std::sync::Arc<Reply>);
+pub(crate) struct StopOnDrop(pub(crate) std::sync::Arc<Reply>);
 
 impl Drop for StopOnDrop {
     fn drop(&mut self) {
@@ -918,7 +946,7 @@ fn chat_resume(
     stream_frames(gw, device_key, reply.stream(after))
 }
 
-fn stream_frames(
+pub(crate) fn stream_frames(
     gw: Gateway,
     device_key: crypto_box::PublicKey,
     frames: impl futures_util::Stream<Item = Value> + Send + 'static,
@@ -960,7 +988,7 @@ async fn track_downloads(inner: std::sync::Weak<Inner>, mut events: broadcast::R
                 d.finished = false;
                 d.error = None;
             }
-            Event::DownloadFinished { repo, .. } => {
+            Event::DownloadFinished { repo, .. } | Event::MediaDownloadFinished { repo, .. } => {
                 download_entry(&mut downloads, &repo).finished = true;
             }
             Event::DownloadFailed { repo, error } => {

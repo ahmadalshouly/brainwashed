@@ -1,0 +1,104 @@
+[
+  {
+    "id": "z-image-turbo",
+    "name": "Z-Image Turbo",
+    "kind": "image",
+    "description": "Sharp, realistic pictures in 8 steps, and it can write words in them. The best place to start.",
+    "license": "Apache-2.0",
+    "minMemoryGb": 12,
+    "files": [
+      { "role": "diffusionModel", "repo": "leejet/Z-Image-Turbo-GGUF", "path": "z_image_turbo-Q4_K.gguf", "size": 3864250304 },
+      { "role": "vae", "repo": "Comfy-Org/z_image_turbo", "path": "split_files/vae/ae.safetensors", "size": 335304388 },
+      { "role": "llm", "repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF", "path": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf", "size": 2497281120 }
+    ],
+    "defaults": { "width": 1024, "height": 1024, "steps": 8, "cfgScale": 1.0 },
+    "args": ["--diffusion-fa", "--offload-to-cpu"]
+  },
+  {
+    "id": "flux1-schnell",
+    "name": "FLUX.1 schnell",
+    "kind": "image",
+    "description": "Black Forest Labs' fast FLUX model: detailed pictures in 4 steps.",
+    "license": "Apache-2.0",
+    "minMemoryGb": 16,
+    "files": [
+      { "role": "diffusionModel", "repo": "leejet/FLUX.1-schnell-gguf", "path": "flux1-schnell-q4_k.gguf", "size": 6884606880 },
+      { "role": "vae", "repo": "Comfy-Org/z_image_turbo", "path": "split_files/vae/ae.safetensors", "size": 335304388 },
+      { "role": "clipL", "repo": "comfyanonymous/flux_text_encoders", "path": "clip_l.safetensors", "size": 246144152 },
+      { "role": "t5xxl", "repo": "city96/t5-v1_1-xxl-encoder-gguf", "path": "t5-v1_1-xxl-encoder-Q4_K_M.gguf", "size": 2896123072 }
+    ],
+    "defaults": { "width": 1024, "height": 1024, "steps": 4, "cfgScale": 1.0, "sampler": "euler" },
+    "args": ["--diffusion-fa", "--clip-on-cpu"]
+  },
+  {
+    "id": "sd-1.5",
+    "name": "Stable Diffusion 1.5",
+    "kind": "image",
+    "description": "The classic: small and quick, even on a laptop with no graphics card. 512 by 512 pictures.",
+    "license": "CreativeML OpenRAIL-M",
+    "minMemoryGb": 6,
+    "files": [
+      { "role": "model", "repo": "second-state/stable-diffusion-v1-5-GGUF", "path": "stable-diffusion-v1-5-pruned-emaonly-Q8_0.gguf", "size": 1763578176 }
+    ],
+    "defaults": {
+      "width": 512,
+      "height": 512,
+      "steps": 20,
+      "cfgScale": 7.0,
+      "sampler": "euler_a",
+      "negativePrompt": "blurry, low quality, deformed, watermark, text"
+    },
+    "args": []
+  },
+  {
+    "id": "wan2.1-t2v-1.3b",
+    "name": "Wan 2.1 1.3B",
+    "kind": "video",
+    "description": "Short videos from a description, about 2 seconds at 832 by 480. The lightest video model.",
+    "license": "Apache-2.0",
+    "minMemoryGb": 12,
+    "files": [
+      { "role": "diffusionModel", "repo": "Comfy-Org/Wan_2.1_ComfyUI_repackaged", "path": "split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors", "size": 2838303560 },
+      { "role": "vae", "repo": "Comfy-Org/Wan_2.1_ComfyUI_repackaged", "path": "split_files/vae/wan_2.1_vae.safetensors", "size": 253815318 },
+      { "role": "t5xxl", "repo": "city96/umt5-xxl-encoder-gguf", "path": "umt5-xxl-encoder-Q4_K_M.gguf", "size": 3655145312 }
+    ],
+    "defaults": {
+      "width": 832,
+      "height": 480,
+      "steps": 20,
+      "cfgScale": 6.0,
+      "sampler": "euler",
+      "flowShift": 3.0,
+      "frames": 33,
+      "fps": 16,
+      "negativePrompt": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
+    },
+    "args": ["--diffusion-fa"]
+  },
+  {
+    "id": "wan2.2-ti2v-5b",
+    "name": "Wan 2.2 5B",
+    "kind": "video",
+    "description": "Better videos from a description, or from a picture you attach, which it sets in motion.",
+    "license": "Apache-2.0",
+    "minMemoryGb": 16,
+    "pictureInput": true,
+    "files": [
+      { "role": "diffusionModel", "repo": "QuantStack/Wan2.2-TI2V-5B-GGUF", "path": "Wan2.2-TI2V-5B-Q4_K_M.gguf", "size": 3433116000 },
+      { "role": "vae", "repo": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "path": "split_files/vae/wan2.2_vae.safetensors", "size": 1409400960 },
+      { "role": "t5xxl", "repo": "city96/umt5-xxl-encoder-gguf", "path": "umt5-xxl-encoder-Q4_K_M.gguf", "size": 3655145312 }
+    ],
+    "defaults": {
+      "width": 832,
+      "height": 480,
+      "steps": 20,
+      "cfgScale": 6.0,
+      "sampler": "euler",
+      "flowShift": 3.0,
+      "frames": 33,
+      "fps": 24,
+      "negativePrompt": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
+    },
+    "args": ["--diffusion-fa", "--offload-to-cpu", "--vae-tiling"]
+  }
+]

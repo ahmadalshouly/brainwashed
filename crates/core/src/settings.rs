@@ -16,6 +16,8 @@ pub struct Settings {
     pub gpu_layers: u32,
     /// Use this llama-server instead of downloading one.
     pub llama_server_path: Option<PathBuf>,
+    /// Use this stable-diffusion.cpp `sd-cli` instead of downloading one.
+    pub sd_cli_path: Option<PathBuf>,
     /// Model loaded at startup.
     pub active_model: Option<String>,
     pub system_prompt: String,
@@ -72,6 +74,7 @@ impl Default for Settings {
             context_size: 8192,
             gpu_layers: 999,
             llama_server_path: None,
+            sd_cli_path: None,
             active_model: None,
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             disabled_skills: Vec::new(),

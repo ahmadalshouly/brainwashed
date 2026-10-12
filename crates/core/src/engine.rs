@@ -22,6 +22,8 @@ pub struct EngineConfig {
     pub data_dir: PathBuf,
     pub app_version: String,
     pub github_release_url: String,
+    /// Where stable-diffusion.cpp releases are listed, for pictures and videos.
+    pub sd_release_url: String,
     pub hf_base: String,
     /// How long a model may take to load before we give up.
     pub load_timeout: Duration,
@@ -33,6 +35,7 @@ impl EngineConfig {
             data_dir: data_dir.into(),
             app_version: app_version.into(),
             github_release_url: release::RELEASES_URL.to_string(),
+            sd_release_url: brainwashed_runtime::sd::RELEASES_URL.to_string(),
             hf_base: catalog::HF_BASE.to_string(),
             load_timeout: Duration::from_secs(300),
         }
@@ -90,6 +93,12 @@ pub enum Event {
         repo: String,
         error: String,
     },
+    /// A picture or video model finished downloading. `repo` is its id.
+    #[serde(rename_all = "camelCase")]
+    MediaDownloadFinished {
+        repo: String,
+        model: crate::media::MediaModel,
+    },
     ModelsChanged,
     SkillsChanged,
     /// MCP servers were added, changed or removed.
@@ -135,6 +144,7 @@ pub(crate) struct Inner {
     /// Talks to MCP servers over HTTP. No overall timeout: answers stream
     /// for as long as a tool runs.
     pub(crate) mcp_http: reqwest::Client,
+    pub(crate) media: crate::media::MediaState,
 }
 
 impl Engine {
@@ -157,6 +167,7 @@ impl Engine {
         }
         kill_stale_server(&config.data_dir);
         let skills = SkillState::open(&config.data_dir.join("skills"))?;
+        let media = crate::media::MediaState::open(&config.data_dir)?;
         let mcp_http = reqwest::Client::builder()
             .user_agent(format!("BrainWashed/{}", config.app_version))
             .connect_timeout(Duration::from_secs(20))
@@ -179,6 +190,7 @@ impl Engine {
                 skills: RwLock::new(skills),
                 mcp: Default::default(),
                 mcp_http,
+                media,
                 config,
             }),
         })
@@ -241,6 +253,14 @@ impl Engine {
             .ok()?;
         let body = res.text().await.ok()?;
         crate::updates::newer_release(&self.inner.config.app_version, &body)
+    }
+
+    pub(crate) fn hf_base(&self) -> &str {
+        &self.inner.config.hf_base
+    }
+
+    pub(crate) fn sd_release_url(&self) -> String {
+        self.inner.config.sd_release_url.clone()
     }
 
     pub(crate) fn app_version(&self) -> &str {
@@ -966,7 +986,7 @@ fn kill_stale_server(data_dir: &Path) {
 }
 
 #[cfg(unix)]
-fn make_executable(path: &Path) -> std::io::Result<()> {
+pub(crate) fn make_executable(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let mut perms = std::fs::metadata(path)?.permissions();
     perms.set_mode(perms.mode() | 0o755);
@@ -974,7 +994,7 @@ fn make_executable(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn make_executable(_: &Path) -> std::io::Result<()> {
+pub(crate) fn make_executable(_: &Path) -> std::io::Result<()> {
     Ok(())
 }
 

@@ -1,6 +1,6 @@
 //! An OpenAI-compatible API, so any OpenAI client library or app can use the
 //! models on this computer: `GET /v1/models` and `POST /v1/chat/completions`
-//! (streaming or not). Requests carry an API key an admin created
+//! (streaming or not), plus pictures and videos (`media`). Requests carry an API key an admin created
 //! (`Authorization: Bearer bw-…`). Chats get the same skills and admin chat
 //! defaults as the web and phone apps.
 //!
@@ -29,12 +29,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 /// An OpenAI-style error: `{ "error": { "message", "type", "code" } }`.
-fn error(status: StatusCode, kind: &str, code: Option<&str>, message: &str) -> Response {
+pub(crate) fn error(status: StatusCode, kind: &str, code: Option<&str>, message: &str) -> Response {
     let body = json!({ "error": { "message": message, "type": kind, "code": code } });
     with_cors((status, Json(body)).into_response())
 }
 
-fn bad_request(message: &str) -> Response {
+pub(crate) fn bad_request(message: &str) -> Response {
     error(
         StatusCode::BAD_REQUEST,
         "invalid_request_error",
@@ -45,7 +45,7 @@ fn bad_request(message: &str) -> Response {
 
 /// Lets web pages on other sites call the API. Requests carry a key, not
 /// cookies, so this exposes nothing a page couldn't already reach with it.
-fn with_cors(mut resp: Response) -> Response {
+pub(crate) fn with_cors(mut resp: Response) -> Response {
     let h = resp.headers_mut();
     h.insert(
         header::ACCESS_CONTROL_ALLOW_ORIGIN,
@@ -57,7 +57,7 @@ fn with_cors(mut resp: Response) -> Response {
     );
     h.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, POST, OPTIONS"),
+        HeaderValue::from_static("GET, POST, DELETE, OPTIONS"),
     );
     resp
 }
@@ -66,7 +66,7 @@ pub(crate) async fn preflight() -> Response {
     with_cors(StatusCode::NO_CONTENT.into_response())
 }
 
-fn authorize(gw: &Gateway, headers: &HeaderMap) -> Result<ApiKey, Response> {
+pub(crate) fn authorize(gw: &Gateway, headers: &HeaderMap) -> Result<ApiKey, Response> {
     let secret = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -113,6 +113,7 @@ pub(crate) async fn models(State(gw): State<Gateway>, headers: HeaderMap) -> Res
                 "name": m.name,
             })
         })
+        .chain(crate::media::listed_models(&gw))
         .collect();
     with_cors(Json(json!({ "object": "list", "data": data })).into_response())
 }
@@ -305,7 +306,7 @@ fn resolve_model(
     ))
 }
 
-fn engine_error(e: &brainwashed_core::Error) -> Response {
+pub(crate) fn engine_error(e: &brainwashed_core::Error) -> Response {
     match e {
         brainwashed_core::Error::Invalid(msg) => bad_request(msg),
         other => error(

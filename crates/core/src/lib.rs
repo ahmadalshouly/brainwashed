@@ -5,6 +5,7 @@ mod community;
 mod documents;
 mod engine;
 mod mcp;
+mod media;
 mod providers;
 mod settings;
 mod skills;
@@ -13,6 +14,7 @@ mod updates;
 
 pub use brainwashed_runtime as runtime;
 pub use brainwashed_runtime::chat::{Delta, SamplingOptions};
+pub use brainwashed_runtime::sd::{FileRole, MediaKind};
 pub use brainwashed_runtime::{
     Attachment, Backend, ChatMessage, Endpoint, Hardware, ReplyStats, Role,
 };
@@ -23,6 +25,10 @@ pub use community::{
 pub use documents::{read_document, Document, MAX_DOCUMENT_BYTES};
 pub use engine::{CatalogItem, ChatAccess, Engine, EngineConfig, EngineState, Event, HostInfo};
 pub use mcp::{McpServer, McpServerInfo, McpStatus, McpToolInfo, McpTransport, ToolResult};
+pub use media::{
+    media_catalog, GeneratedMedia, MediaCatalogItem, MediaDefaults, MediaEvent, MediaModel,
+    MediaRecipe, MediaRequest, RecipeFile,
+};
 pub use providers::{ChatModel, Provider, ProviderInfo, LOCAL_MODEL};
 pub use settings::{RemoteAccess, Settings};
 pub use skills::{ChatEvent, SkillInfo, SkillList, MAX_SKILL_CHARS};

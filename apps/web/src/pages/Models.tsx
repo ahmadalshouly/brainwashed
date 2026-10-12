@@ -1,5 +1,12 @@
 import { useState } from "react";
-import type { CatalogItem, DownloadStatus, Hardware, InstalledModel } from "@brainwashed/api";
+import type {
+  CatalogItem,
+  DownloadStatus,
+  Hardware,
+  InstalledModel,
+  MediaCatalogItem,
+  MediaModel,
+} from "@brainwashed/api";
 import { Badge, Banner, Card, formatBytes, PageHeader, Progress, useAction, useHost, useLoad } from "../ui";
 
 export function ModelsPage() {
@@ -7,13 +14,20 @@ export function ModelsPage() {
   const models = useLoad<InstalledModel[]>(() => remote.models(), [remote], 10000);
   const catalog = useLoad<CatalogItem[]>(() => remote.catalog(), [remote], 30000);
   const hw = useLoad<Hardware>(() => remote.hardware(), [remote]);
+  // Hosts before pictures and videos have neither call.
+  const mediaModels = useLoad<MediaModel[]>(() => remote.mediaModels().catch(() => []), [remote], 10000);
+  const mediaCatalog = useLoad<MediaCatalogItem[]>(() => remote.mediaCatalog().catch(() => []), [remote], 30000);
   const [polling, setPolling] = useState(true);
   const downloads = useLoad<DownloadStatus[]>(
     async () => {
       const d = await remote.downloads();
       const active = d.some((x) => !x.finished);
       setPolling(active);
-      if (d.some((x) => x.finished)) models.reload();
+      if (d.some((x) => x.finished)) {
+        models.reload();
+        mediaModels.reload();
+        mediaCatalog.reload();
+      }
       return d;
     },
     [remote],
@@ -22,9 +36,20 @@ export function ModelsPage() {
   const action = useAction();
   const [repo, setRepo] = useState("");
   const [quant, setQuant] = useState("");
+  const [importPath, setImportPath] = useState("");
 
   const current = state && "model" in state ? state.model : null;
   const downloading = (r: string) => downloads.value?.find((d) => d.repo === r && !d.finished);
+
+  /** What a download is called: a picture or video model's name, or the repo. */
+  const downloadName = (r: string) => mediaCatalog.value?.find((c) => c.id === r)?.name ?? r;
+
+  const downloadMedia = (id: string) =>
+    action.run(async () => {
+      await remote.downloadMediaModel(id);
+      setPolling(true);
+      downloads.reload();
+    });
 
   const download = (r: string, q?: string) =>
     action.run(async () => {
@@ -76,7 +101,7 @@ export function ModelsPage() {
           {downloads.value!.map((d) => (
             <div key={d.repo} className="download">
               <div className="row spread">
-                <span className="mono">{d.repo}</span>
+                <span className="mono">{downloadName(d.repo)}</span>
                 <span className="muted small">
                   {d.error
                     ? "Failed"
@@ -188,6 +213,101 @@ export function ModelsPage() {
             );
           })}
         </div>
+      </Card>
+
+      <Card title="Pictures and videos">
+        <p className="muted small">
+          These models make pictures and short videos from a description, in the chat's model menu. They run with{" "}
+          <a href="https://github.com/leejet/stable-diffusion.cpp" target="_blank" rel="noreferrer">
+            stable-diffusion.cpp
+          </a>
+          , downloaded the first time. A graphics card helps a lot: on a processor alone a picture takes minutes and a
+          video can take an hour.
+        </p>
+        {(mediaModels.value?.length ?? 0) > 0 && (
+          <div className="list">
+            {mediaModels.value!.map((m) => (
+              <div key={m.id} className="list-row">
+                <div className="grow">
+                  <strong>{m.name}</strong> <Badge kind="ok">{m.kind === "video" ? "video" : "picture"}</Badge>
+                  <div className="muted small">
+                    {formatBytes(m.size)} · {m.defaults.width}×{m.defaults.height}
+                    {m.kind === "video" && m.defaults.frames
+                      ? ` · ${m.defaults.frames} frames at ${m.defaults.fps ?? 16} fps`
+                      : ` · ${m.defaults.steps} steps`}
+                    {m.recipe ? "" : ` · ${m.files[0]?.[1] ?? ""}`}
+                  </div>
+                </div>
+                <button
+                  className="danger-text"
+                  disabled={action.busy}
+                  onClick={() => {
+                    if (confirm(`Delete ${m.name}? This frees up to ${formatBytes(m.size)}.`))
+                      action.run(async () => {
+                        await remote.deleteMediaModel(m.id);
+                        mediaModels.reload();
+                        mediaCatalog.reload();
+                      });
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="list">
+          {mediaCatalog.value
+            ?.filter((c) => !c.installed)
+            .map((c) => {
+              const d = downloading(c.id);
+              return (
+                <div key={c.id} className="list-row">
+                  <div className="grow">
+                    <strong>{c.name}</strong> <Badge>{c.kind === "video" ? "video" : "picture"}</Badge>{" "}
+                    {c.fits ? <Badge kind="ok">fits</Badge> : <Badge kind="warn">needs {c.minMemoryGb} GB</Badge>}
+                    {c.pictureInput && <Badge>starts from a picture</Badge>}
+                    <div className="muted small">
+                      {c.description} · {formatBytes(c.size)} · {c.license}
+                    </div>
+                  </div>
+                  {d ? (
+                    <span className="muted small">Downloading…</span>
+                  ) : (
+                    <button disabled={action.busy} onClick={() => downloadMedia(c.id)}>
+                      Download
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+        </div>
+        <form
+          className="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const path = importPath.trim();
+            if (path)
+              action.run(async () => {
+                await remote.importMediaModel(path);
+                setImportPath("");
+                mediaModels.reload();
+              });
+          }}
+        >
+          <input
+            className="grow"
+            placeholder="Or add a checkpoint on this computer: /path/to/model.safetensors"
+            aria-label="Path to a picture model file"
+            value={importPath}
+            onChange={(e) => setImportPath(e.target.value)}
+          />
+          <button disabled={!importPath.trim() || action.busy}>Add</button>
+        </form>
+        <p className="muted small">
+          Single-file Stable Diffusion 1.5, 2.x and SDXL checkpoints (.safetensors, .ckpt or .gguf) work, such as ones
+          from Civitai or Hugging Face.
+        </p>
       </Card>
 
       <Card title="Any model from Hugging Face">

@@ -3,7 +3,17 @@
 // over on first load. When IndexedDB is unavailable (some private windows)
 // chats last until the page closes.
 
-import type { Attachment, ChatMessage, ChatOptions, ReplyStats, ToolCall, ToolResult } from "@brainwashed/api";
+import type {
+  Attachment,
+  ChatMessage,
+  ChatOptions,
+  GeneratedMedia,
+  MediaEvent,
+  MediaKind,
+  ReplyStats,
+  ToolCall,
+  ToolResult,
+} from "@brainwashed/api";
 import { loadChats as loadLegacyChats, saveChats as clearLegacyChats } from "./storage";
 
 /** A message as the chat shows it, with what streamed alongside the answer. */
@@ -16,6 +26,10 @@ export interface Turn extends ChatMessage {
   stats?: ReplyStats;
   /** Tools the model called. */
   toolCalls?: ShownCall[];
+  /** A picture or video a picture model made. */
+  media?: GeneratedMedia;
+  /** While a picture or video is being made: how far it got, and its shape. */
+  making?: { event: MediaEvent; kind: MediaKind; width: number; height: number; startedAt: number };
   error?: string;
 }
 
@@ -100,7 +114,9 @@ export function sortChats(chats: Conversation[]): Conversation[] {
 
 export async function saveConversation(c: Conversation): Promise<void> {
   // Errors are shown, not kept.
-  const turns = c.turns.filter((t) => !t.error || t.content).map(({ error: _, ...t }) => t);
+  const turns = c.turns
+    .filter((t) => !t.error || t.content || t.media)
+    .map(({ error: _, making: __, ...t }) => t);
   await run("readwrite", (s) => s.put({ ...c, turns }));
 }
 
@@ -135,7 +151,9 @@ export function toMarkdown(c: Conversation): string {
   for (const t of c.turns) {
     parts.push(t.role === "user" ? "## You" : "## BrainWashed", "");
     for (const a of t.attachments ?? []) parts.push(`*Attached: ${a.name}*`, "");
-    parts.push(t.content, "");
+    if (t.media)
+      parts.push(`*Made a ${t.media.kind === "video" ? "video" : "picture"} with ${t.media.modelName}: ${t.media.prompt}*`, "");
+    if (t.content) parts.push(t.content, "");
   }
   return parts.join("\n");
 }
@@ -176,4 +194,53 @@ export function toOptions(p: ChatPrefs): ChatOptions | undefined {
   const { style: _, ...options } = p;
   const set = Object.fromEntries(Object.entries(options).filter(([, v]) => v !== undefined && v !== null && !Number.isNaN(v)));
   return Object.keys(set).length ? (set as ChatOptions) : undefined;
+}
+
+// ----- picture and video settings, kept per browser -----
+
+const MEDIA_OPTIONS = "brainwashed.mediaOptions";
+
+export type Shape = "square" | "portrait" | "landscape";
+
+export interface MediaPrefs {
+  /** Left out uses the model's own size. */
+  shape?: Shape;
+  steps?: number;
+  cfgScale?: number;
+  /** Fixed seed; left out picks a new one each time. */
+  seed?: number;
+  negativePrompt?: string;
+  /** Videos: length in seconds. */
+  seconds?: number;
+  /** How much of a starting picture to change, 0 to 1. */
+  strength?: number;
+}
+
+export function loadMediaPrefs(): MediaPrefs {
+  try {
+    return JSON.parse(localStorage.getItem(MEDIA_OPTIONS) ?? "{}") as MediaPrefs;
+  } catch {
+    return {};
+  }
+}
+
+export function saveMediaPrefs(p: MediaPrefs) {
+  try {
+    localStorage.setItem(MEDIA_OPTIONS, JSON.stringify(p));
+  } catch {
+    // Not kept; still used for this visit.
+  }
+}
+
+/**
+ * The width and height for a shape, keeping about as many pixels as the
+ * model's own size (what it was trained for), in multiples of 16.
+ */
+export function sizeFor(shape: Shape | undefined, width: number, height: number): { width: number; height: number } {
+  if (!shape) return { width, height };
+  const area = width * height;
+  const ratio = shape === "square" ? 1 : shape === "portrait" ? 2 / 3 : 3 / 2;
+  const w = Math.sqrt(area * ratio);
+  const round = (n: number) => Math.max(64, Math.round(n / 16) * 16);
+  return { width: round(w), height: round(area / w) };
 }
