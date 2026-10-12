@@ -19,6 +19,7 @@ const MEMBER_METHODS: &[&str] = &[
     "readDocument",
     "chatModels",
     "chatDefaults",
+    "mediaModels",
 ];
 
 /// Calls that change something, recorded in the audit log.
@@ -28,6 +29,9 @@ const AUDITED: &[&str] = &[
     "downloadModel",
     "deleteModel",
     "setModelSpeedup",
+    "downloadMediaModel",
+    "deleteMediaModel",
+    "importMediaModel",
     "setSkillEnabled",
     "saveSkill",
     "deleteSkill",
@@ -111,6 +115,7 @@ async fn call(gw: &Gateway, device: &Device, method: &str, params: Value) -> Cal
 
         "chatModels" => to_json(engine.chat_models(device.role == DeviceRole::Admin)),
         "chatDefaults" => to_json(engine.settings().chat_defaults),
+        "mediaModels" => to_json(engine.media_models()),
         "readDocument" => {
             use base64::Engine as _;
             let name = str_param(&params, "name")?.to_string();
@@ -199,6 +204,52 @@ async fn call(gw: &Gateway, device: &Device, method: &str, params: Value) -> Cal
                 .await
                 .map_err(err)?;
             Ok(Value::Null)
+        }
+
+        // ----- picture and video models -----
+        "mediaCatalog" => to_json(engine.media_catalog()),
+        "downloadMediaModel" => {
+            let id = str_param(&params, "id")?.to_string();
+            if !engine.media_catalog().iter().any(|c| c.recipe.id == id) {
+                return Err(format!("no picture or video model `{id}`"));
+            }
+            {
+                let mut downloads = gw.inner.downloads.lock().unwrap();
+                if downloads.iter().any(|d| d.repo == id && !d.finished) {
+                    return Err(format!("{id} is already downloading"));
+                }
+                *download_entry(&mut downloads, &id) = crate::server::DownloadStatus {
+                    repo: id.clone(),
+                    done: 0,
+                    total: None,
+                    finished: false,
+                    error: None,
+                };
+            }
+            let engine = engine.clone();
+            tokio::spawn(async move {
+                if let Err(e) = engine.download_media_model(&id).await {
+                    tracing::warn!("downloading {id} failed: {e}");
+                }
+            });
+            Ok(Value::Null)
+        }
+        "deleteMediaModel" => {
+            engine
+                .delete_media_model(str_param(&params, "id")?)
+                .await
+                .map_err(err)?;
+            Ok(Value::Null)
+        }
+        "importMediaModel" => {
+            let path = std::path::PathBuf::from(str_param(&params, "path")?.trim());
+            if !path.is_file() {
+                return Err(format!("{} isn't a file on this computer", path.display()));
+            }
+            engine
+                .import_media_model(&path)
+                .map_err(err)
+                .and_then(to_json)
         }
 
         // ----- cloud providers -----

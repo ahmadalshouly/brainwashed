@@ -17,6 +17,7 @@ pub mod audit;
 mod control;
 pub mod crypto;
 pub mod devices;
+mod media;
 mod openai;
 pub mod relay;
 mod replies;

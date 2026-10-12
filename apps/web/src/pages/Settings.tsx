@@ -26,6 +26,7 @@ export function SettingsPage() {
       gpu_layers: s.gpu_layers,
       backend: s.backend,
       llama_server_path: s.llama_server_path?.trim() || null,
+      sd_cli_path: s.sd_cli_path?.trim() || null,
       cloudflared_path: s.cloudflared_path?.trim() || null,
       phone_port: s.phone_port,
       check_for_updates: s.check_for_updates,
@@ -139,6 +140,10 @@ export function SettingsPage() {
           <label>
             Custom llama-server
             <input placeholder="Downloaded automatically" value={s.llama_server_path ?? ""} onChange={(e) => set("llama_server_path", e.target.value)} />
+          </label>
+          <label>
+            Custom sd-cli (pictures and videos)
+            <input placeholder="Downloaded automatically" value={s.sd_cli_path ?? ""} onChange={(e) => set("sd_cli_path", e.target.value)} />
           </label>
         </div>
       </Card>

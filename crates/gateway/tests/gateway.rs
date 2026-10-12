@@ -1068,3 +1068,195 @@ async fn a_reply_nobody_can_resume_stops_when_the_reader_leaves() {
         "the provider is still being read"
     );
 }
+
+/// A stand-in for stable-diffusion.cpp's sd-cli: prints progress bars like the
+/// real one and copies `fixture.png` to the output.
+#[cfg(unix)]
+fn fake_sd_cli(dir: &std::path::Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let script = r#"#!/bin/sh
+here="$(cd "$(dirname "$0")" && pwd)"
+printf '%s\n' "$@" > "$here/args.txt"
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in --output) out="$2"; shift;; esac
+  shift
+done
+printf '\r| 1/2 - 1.00s/it'
+printf '\r| 2/2 - 1.00s/it\n'
+cp "$here/fixture.png" "$out"
+"#;
+    std::fs::create_dir_all(dir).unwrap();
+    let bin = dir.join("sd-cli");
+    std::fs::write(&bin, script).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut png = vec![0x89, b'P', b'N', b'G', 13, 10, 26, 10, 0, 0, 0, 13];
+    png.extend(b"IHDR");
+    png.extend(64u32.to_be_bytes());
+    png.extend(32u32.to_be_bytes());
+    std::fs::write(dir.join("fixture.png"), png).unwrap();
+    bin
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn makes_pictures_and_videos_for_devices_and_the_api() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = fake_sd_cli(&dir.path().join("sd"));
+    // A video model as a download would leave it.
+    let weights = dir.path().join("wan.gguf");
+    std::fs::write(&weights, b"w").unwrap();
+    std::fs::write(
+        dir.path().join("media.json"),
+        json!([{
+            "id": "wan", "name": "Wan", "kind": "video", "size": 1,
+            "files": [["diffusionModel", weights]],
+            "defaults": { "width": 832, "height": 480, "steps": 2, "cfgScale": 6.0, "frames": 9, "fps": 16 },
+            "args": [], "pictureInput": false, "recipe": null
+        }])
+        .to_string(),
+    )
+    .unwrap();
+    let engine = Engine::new(EngineConfig::new(dir.path(), "0.1.0")).unwrap();
+    let mut s = engine.settings();
+    s.sd_cli_path = Some(bin);
+    engine.update_settings(s).unwrap();
+    let gw = Gateway::new(engine, dir.path()).unwrap();
+    let port = gw.start(0).await.unwrap().port();
+    let offer = gw.create_pairing_offer(DeviceRole::Admin).unwrap();
+    let mut admin = Phone::from_offer(&offer.url, port);
+    admin.pair(&query(&offer.url, "t")).await.unwrap();
+
+    let checkpoint = dir.path().join("sd15.safetensors");
+    std::fs::write(&checkpoint, b"w").unwrap();
+    let imported = admin
+        .call("importMediaModel", json!({ "path": checkpoint }))
+        .await;
+    let image_id = imported["ok"]["id"].as_str().unwrap().to_string();
+    let listed = admin.call("mediaModels", Value::Null).await;
+    assert_eq!(listed["ok"].as_array().unwrap().len(), 2);
+    let catalog = admin.call("mediaCatalog", Value::Null).await;
+    assert!(catalog["ok"].as_array().unwrap().len() >= 3);
+
+    // Members can make pictures too.
+    let offer = gw.create_pairing_offer(DeviceRole::Member).unwrap();
+    let mut member = Phone::from_offer(&offer.url, port);
+    member.pair(&query(&offer.url, "t")).await.unwrap();
+    let denied = member
+        .call("importMediaModel", json!({ "path": checkpoint }))
+        .await;
+    assert!(denied["error"].as_str().unwrap().contains("Only admins"));
+    let (status, text) = member
+        .post(&member.sealed_call(
+            "generate",
+            json!({ "request": { "model": image_id, "prompt": "a red fox", "seed": 5, "steps": 2 } }),
+            now_ms(),
+        ))
+        .await;
+    assert_eq!(status, 200, "{text}");
+    let frames: Vec<Value> = text.lines().map(|l| member.open_line(l)).collect();
+    assert!(frames
+        .iter()
+        .any(|f| f["event"]["kind"] == "progress" && f["event"]["step"] == 1));
+    let done = &frames.last().unwrap()["done"];
+    assert_eq!(done["mime"], "image/png");
+    assert_eq!(done["seed"], 5);
+    assert_eq!(
+        (done["width"].as_u64(), done["height"].as_u64()),
+        (Some(64), Some(32))
+    );
+    assert!(!done["data"].as_str().unwrap().is_empty());
+
+    // The OpenAI-style API.
+    let created = admin.call("createApiKey", json!({ "name": "art" })).await;
+    let secret = created["ok"]["secret"].as_str().unwrap().to_string();
+    let api = format!("http://127.0.0.1:{port}/v1");
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let models: Value = http
+        .get(format!("{api}/models"))
+        .bearer_auth(&secret)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(models["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["id"] == "wan" && m["kind"] == "video"));
+    let r = http
+        .post(format!("{api}/images/generations"))
+        .bearer_auth(&secret)
+        .json(&json!({ "prompt": "a lighthouse", "size": "512x512" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let body: Value = r.json().await.unwrap();
+    assert!(!body["data"][0]["b64_json"].as_str().unwrap().is_empty());
+    let r = http
+        .post(format!("{api}/images/generations"))
+        .bearer_auth(&secret)
+        .json(&json!({ "prompt": "x", "model": "nope" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+
+    let job: Value = http
+        .post(format!("{api}/videos"))
+        .bearer_auth(&secret)
+        .json(&json!({ "prompt": "waves", "seconds": "1" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(job["object"], "video");
+    let id = job["id"].as_str().unwrap().to_string();
+    let mut status = Value::Null;
+    for _ in 0..100 {
+        status = http
+            .get(format!("{api}/videos/{id}"))
+            .bearer_auth(&secret)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if status["status"] == "completed" || status["status"] == "failed" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(status["status"], "completed", "{status}");
+    assert_eq!(status["progress"], 100);
+    let args = std::fs::read_to_string(dir.path().join("sd").join("args.txt")).unwrap();
+    assert!(args.contains("vid_gen"));
+    // One second at 16 fps is 17 frames.
+    assert!(args.contains("--video-frames\n17\n"), "{args}");
+    let content = http
+        .get(format!("{api}/videos/{id}/content"))
+        .bearer_auth(&secret)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(content.status(), 200);
+    assert_eq!(content.headers()["content-type"], "image/webp");
+    assert!(!content.bytes().await.unwrap().is_empty());
+
+    // Another key can't see it.
+    let other = admin.call("createApiKey", json!({ "name": "other" })).await;
+    let other = other["ok"]["secret"].as_str().unwrap().to_string();
+    let r = http
+        .get(format!("{api}/videos/{id}"))
+        .bearer_auth(&other)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+}

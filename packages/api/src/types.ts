@@ -313,12 +313,139 @@ export interface CatalogItem {
   fits: boolean;
 }
 
+/** What a picture or video model makes. Mirrors `MediaKind` in crates/runtime. */
+export type MediaKind = "image" | "video";
+
+/** The part a file plays in a picture or video model. Mirrors `FileRole` in crates/runtime. */
+export type MediaFileRole =
+  | "model"
+  | "diffusionModel"
+  | "highNoiseDiffusionModel"
+  | "vae"
+  | "clipL"
+  | "clipG"
+  | "t5xxl"
+  | "llm"
+  | "clipVision"
+  | "taesd";
+
+/** The settings a picture or video model works best with. Mirrors `MediaDefaults` in crates/core. */
+export interface MediaDefaults {
+  width: number;
+  height: number;
+  steps: number;
+  cfgScale: number;
+  sampler?: string;
+  negativePrompt?: string;
+  flowShift?: number;
+  /** Videos only. */
+  frames?: number;
+  fps?: number;
+}
+
+/** A file of a catalog model, on Hugging Face. */
+export interface MediaFile {
+  role: MediaFileRole;
+  repo: string;
+  path: string;
+  /** Approximate, in bytes. */
+  size: number;
+}
+
+/** A picture or video model admins can download (`mediaCatalog`). Mirrors `MediaCatalogItem` in crates/core. */
+export interface MediaCatalogItem {
+  id: string;
+  name: string;
+  kind: MediaKind;
+  description: string;
+  license: string;
+  /** Memory it needs to run well, in GB. */
+  minMemoryGb: number;
+  /** Videos: it can start from an attached picture. */
+  pictureInput?: boolean;
+  files: MediaFile[];
+  defaults: MediaDefaults;
+  args: string[];
+  /** All files together, in bytes. */
+  size: number;
+  installed: boolean;
+  fits: boolean;
+}
+
+/** An installed picture or video model (`mediaModels`). Mirrors `MediaModel` in crates/core. */
+export interface MediaModel {
+  id: string;
+  name: string;
+  kind: MediaKind;
+  files: [MediaFileRole, string][];
+  size: number;
+  defaults: MediaDefaults;
+  args: string[];
+  /** Videos: it can start from a picture. Pictures always can. */
+  pictureInput: boolean;
+  /** The catalog entry it came from; null for imported files. */
+  recipe: string | null;
+}
+
+/** What to make with `generate`. Anything left out uses the model's defaults. Mirrors `MediaRequest` in crates/core. */
+export interface MediaRequest {
+  /** A `MediaModel` id. */
+  model: string;
+  prompt: string;
+  negativePrompt?: string;
+  /** Rounded down to a multiple of 16, 64 to 2048. */
+  width?: number;
+  height?: number;
+  /** 1 to 100. */
+  steps?: number;
+  /** 0 to 30. How closely to follow the prompt. */
+  cfgScale?: number;
+  /** Left out picks one; the result says which. */
+  seed?: number;
+  /** Videos: 1 to 121, made 4n+1. */
+  frames?: number;
+  fps?: number;
+  /** A picture to start from, base64. */
+  image?: string;
+  /** How much of the starting picture to change, 0 to 1 (pictures). */
+  strength?: number;
+}
+
+/** A finished picture or video. Mirrors `GeneratedMedia` in crates/core. */
+export interface GeneratedMedia {
+  kind: MediaKind;
+  /** "image/png", or "image/webp" (animated) for videos: it plays in an <img>. */
+  mime: string;
+  /** Base64. */
+  data: string;
+  width: number;
+  height: number;
+  seed: number;
+  model: string;
+  modelName: string;
+  prompt: string;
+  frames?: number;
+  fps?: number;
+  /** How long it took. */
+  seconds: number;
+}
+
+/** What streams back while a picture or video is made. Mirrors `MediaEvent` in crates/core. */
+export type MediaEvent =
+  /** Waiting for another picture or video to finish first. */
+  | { kind: "queued" }
+  /** Downloading stable-diffusion.cpp, the first time. */
+  | { kind: "installing"; done: number; total: number | null }
+  | { kind: "progress"; stage: "loading" | "drawing" | "finishing"; step: number; steps: number };
+
 /** Mirrors `Event` in crates/core. */
 export type EngineEvent =
   | ({ type: "state" } & EngineState)
   | { type: "downloadProgress"; repo: string; done: number; total: number | null }
   | { type: "downloadFinished"; repo: string; model: InstalledModel }
   | { type: "downloadFailed"; repo: string; error: string }
+  /** A picture or video model finished downloading; `repo` is its id. */
+  | { type: "mediaDownloadFinished"; repo: string; model: MediaModel }
   | { type: "modelsChanged" }
   | { type: "skillsChanged" }
   | { type: "toolsChanged" };
@@ -430,6 +557,8 @@ export interface HostSettings {
   context_size: number;
   gpu_layers: number;
   llama_server_path: string | null;
+  /** stable-diffusion.cpp's sd-cli to use for pictures and videos instead of downloading one. */
+  sd_cli_path: string | null;
   active_model: string | null;
   system_prompt: string;
   disabled_skills: string[];
@@ -457,6 +586,7 @@ export interface Hardware {
 
 /** A model download in progress or just finished. */
 export interface DownloadStatus {
+  /** The Hugging Face repo, or a picture or video model's id. */
   repo: string;
   done: number;
   total: number | null;

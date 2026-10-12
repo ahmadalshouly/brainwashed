@@ -41,7 +41,7 @@ The host refuses the call if any of these hold:
 
 Replies are `{ n, c }` and decrypt to `{ ok: result }` or `{ error: message }`.
 
-Any paired device can call `info`, `state`, `models`, `skills`, `whoami` (its `{ deviceId, name, role }`), `chatModels`, `chatDefaults`, `readDocument { name, data }`, `chat { messages, options?, model?, replyId? }`, `chatResume { replyId, after }` and `chatStop { replyId }`.
+Any paired device can call `info`, `state`, `models`, `skills`, `whoami` (its `{ deviceId, name, role }`), `chatModels`, `chatDefaults`, `readDocument { name, data }`, `chat { messages, options?, model?, replyId? }`, `chatResume { replyId, after }`, `chatStop { replyId }`, `mediaModels` and `generate { request, replyId? }`.
 
 - `chatModels` lists what the chat can use: `{ id, name, provider, vision, cloud }`. `local` is the model running on the computer (listed only while one is loaded); cloud models are `<provider>/<model>` and appear when an admin connects a provider. Members see only the models admins share with them.
 - `chatDefaults` returns the admin's model settings for every chat, in the same shape as chat `options`. The host already applies them to anything a chat leaves out; clients show them so people know what "default" means.
@@ -58,6 +58,7 @@ Admins can also call:
 | Cloud providers | `providers` (keys are never sent back, only `keySet` and `keyHint`), `saveProvider { provider: { id, name, baseUrl, apiKey?, models, members } }` (no `apiKey` keeps the saved key), `deleteProvider { id }`, `providerModels { baseUrl, apiKey?, id? }` |
 | Tools (MCP servers) | `mcpServers` (each with `status`, `tools`, `serverInfo` and the last lines of `log`), `saveMcpServer { server: { id, name, enabled, members, transport } }` where `transport` is `{ type: "stdio", command, args, env, cwd? }` or `{ type: "http", url, headers }` (starts it in the background; poll `mcpServers` while its status is `starting`), `setMcpServerEnabled { id, enabled }`, `restartMcpServer { id }`, `deleteMcpServer { id }` |
 | API keys | `apiKeys`, `createApiKey { name, role? }` (returns `{ key, secret }`; the secret is shown only this once), `revokeApiKey { id }`. The keys are for the OpenAI-compatible API in [api.md](api.md). |
+| Pictures and videos | `mediaCatalog` (recommended models, with `size`, `installed` and `fits`), `downloadMediaModel { id }` (returns at once; poll `downloads`, where it shows with `repo` set to the id), `deleteMediaModel { id }` (keeps files another model still uses), `importMediaModel { path }` (a single-file checkpoint on the computer: `.safetensors`, `.ckpt` or `.gguf`) |
 | Audit | `auditLog { limit? }`, newest first |
 
 Speculative decoding drafts (DFlash, DSpark, EAGLE-3, Gemma 4 assistant GGUFs) are listed with `InstalledModel.draft` set to their llama-server `--spec-type`. They can't be loaded alone (`loadModel` refuses them with an explanation); `setModelSpeedup` pairs one with the main model it was made for, which then runs with `--model-draft`. Changing it reloads the model if it is running.
@@ -86,6 +87,17 @@ It streams `application/x-ndjson` (uncompressed: send `Accept-Encoding: identity
 `chatResume { replyId, after }` streams the same frames for a kept reply, skipping the first `after` (the frames the device already handled), then follows the reply live until it ends. Only the device that started the reply can resume it. If the host no longer has it, the stream is a single `{ error }`.
 
 `chatStop { replyId }` stops a reply this device started, for a Stop button. The model stops generating, and the reply's stream ends with `{ "done": "<text so far>", "stopped": true }` (plus `toolCalls` if there were any). It returns `{ ok: true }`, also when the reply already ended or is unknown.
+
+### Pictures and videos
+
+`mediaModels` lists the installed picture and video models: `{ id, name, kind: "image" | "video", size, defaults: { width, height, steps, cfgScale, sampler?, negativePrompt?, flowShift?, frames?, fps? }, pictureInput }`. They run with [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp), which the host downloads from its releases the first time something is made (or uses `sd_cli_path` from the settings).
+
+`generate` takes `request`: `{ model, prompt, negativePrompt?, width?, height?, steps?, cfgScale?, seed?, frames?, fps?, image?, strength? }`. `image` is a base64 picture to start from: picture models change it as much as `strength` says (0 to 1), and video models with `pictureInput` set it in motion. Anything left out uses the model's `defaults`; the seed is random. Sizes are rounded to a multiple of 16, and video `frames` to 4n+1.
+
+It streams frames like `chat`, with `replyId`, `chatResume` and `chatStop` working the same way:
+
+- `{ event: MediaEvent }` while it works: `{ kind: "queued" }` when it waits for another picture or video to finish, `{ kind: "installing", done, total }` while stable-diffusion.cpp downloads, and `{ kind: "progress", stage: "loading" | "drawing" | "finishing", step, steps }`.
+- `{ done: GeneratedMedia }` at the end: `{ kind, mime, data, width, height, seed, model, modelName, prompt, frames?, fps?, seconds }`, where `data` is base64 of a PNG, or for videos an animated WebP, and `seconds` is how long it took. Or `{ error }`, which is `{ error: "Stopped.", stopped: true }` after `chatStop`.
 
 ## Public address
 

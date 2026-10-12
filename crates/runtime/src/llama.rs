@@ -256,7 +256,7 @@ fn free_port() -> Result<u16> {
         .port())
 }
 
-fn prepend_env(var: &str, dir: &Path) -> std::ffi::OsString {
+pub(crate) fn prepend_env(var: &str, dir: &Path) -> std::ffi::OsString {
     let mut paths = vec![dir.to_path_buf()];
     if let Some(existing) = std::env::var_os(var) {
         paths.extend(std::env::split_paths(&existing));

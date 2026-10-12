@@ -22,10 +22,15 @@ import type {
   DeviceRole,
   DownloadStatus,
   EngineState,
+  GeneratedMedia,
   Hardware,
   HostInfo,
   HostSettings,
   InstalledModel,
+  MediaCatalogItem,
+  MediaEvent,
+  MediaModel,
+  MediaRequest,
   NewApiKey,
   PairedDevice,
   PairingOffer,
@@ -311,6 +316,8 @@ export class RemoteHost {
   chatModels = () => this.call<ChatModel[]>("chatModels");
   /** The admin's model settings, used for anything a chat leaves out. */
   chatDefaults = () => this.call<ChatOptions>("chatDefaults");
+  /** Installed picture and video models. Older hosts have none. */
+  mediaModels = () => this.call<MediaModel[]>("mediaModels");
 
   // Admins only.
   loadModel = (id: string) => this.call<null>("loadModel", { id });
@@ -322,6 +329,13 @@ export class RemoteHost {
   deleteModel = (id: string) => this.call<null>("deleteModel", { id });
   /** Pairs a model with a draft model that speeds it up; null turns it off. */
   setModelSpeedup = (id: string, speedup: string | null) => this.call<null>("setModelSpeedup", { id, speedup });
+  /** Picture and video models to download. */
+  mediaCatalog = () => this.call<MediaCatalogItem[]>("mediaCatalog");
+  /** Starts downloading a picture or video model; progress shows in `downloads` under its id. */
+  downloadMediaModel = (id: string) => this.call<null>("downloadMediaModel", { id });
+  deleteMediaModel = (id: string) => this.call<null>("deleteMediaModel", { id });
+  /** Adds a single-file checkpoint (.safetensors, .ckpt or .gguf) already on the computer. */
+  importMediaModel = (path: string) => this.call<MediaModel>("importMediaModel", { path });
   setSkillEnabled = (name: string, enabled: boolean) => this.call<null>("setSkillEnabled", { name, enabled });
   skillList = () => this.call<SkillList>("skillList");
   skillSource = (name: string) => this.call<string>("skillSource", { name });
@@ -428,7 +442,45 @@ export class RemoteHost {
     /** `model`: "local" or "<provider>/<model>" from `chatModels`; the local model when left out. */
     extra?: { options?: ChatOptions; model?: string; replyId?: string },
   ): Promise<string> {
-    return this.readFrames(await this.post("chat", { messages, ...extra }, signal, true), onEvent, signal);
+    return this.readFrames<ChatEvent, string>(
+      await this.post("chat", { messages, ...extra }, signal, true),
+      onEvent,
+      signal,
+    );
+  }
+
+  /**
+   * Makes a picture or a video with a model from `mediaModels`, streaming
+   * progress; resolves with the result. This takes from seconds to many
+   * minutes. A `replyId` works as for `chat`: the computer keeps going if the
+   * connection drops, `generateResume` picks it up again and `chatStop`
+   * stops it.
+   */
+  async generate(
+    request: MediaRequest,
+    onEvent: (e: MediaEvent) => void,
+    signal?: AbortSignal,
+    extra?: { replyId?: string },
+  ): Promise<GeneratedMedia> {
+    return this.readFrames<MediaEvent, GeneratedMedia>(
+      await this.post("generate", { request, ...extra }, signal, true),
+      onEvent,
+      signal,
+    );
+  }
+
+  /** Continues `generate` with a `replyId`, like `chatResume`. */
+  async generateResume(
+    replyId: string,
+    after: number,
+    onEvent: (e: MediaEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<GeneratedMedia> {
+    return this.readFrames<MediaEvent, GeneratedMedia>(
+      await this.post("chatResume", { replyId, after }, signal, true),
+      onEvent,
+      signal,
+    );
   }
 
   /**
@@ -437,7 +489,11 @@ export class RemoteHost {
    * as it is written. Rejects if the computer no longer has the reply.
    */
   async chatResume(replyId: string, after: number, onEvent: (e: ChatEvent) => void, signal?: AbortSignal): Promise<string> {
-    return this.readFrames(await this.post("chatResume", { replyId, after }, signal, true), onEvent, signal);
+    return this.readFrames<ChatEvent, string>(
+      await this.post("chatResume", { replyId, after }, signal, true),
+      onEvent,
+      signal,
+    );
   }
 
   /**
@@ -447,18 +503,18 @@ export class RemoteHost {
    */
   chatStop = (replyId: string) => this.call<null>("chatStop", { replyId });
 
-  private async readFrames(
+  private async readFrames<E, D>(
     res: Awaited<ReturnType<FetchLike>>,
-    onEvent: (e: ChatEvent) => void,
+    onEvent: (e: E) => void,
     signal?: AbortSignal,
-  ): Promise<string> {
+  ): Promise<D> {
     const stopped = () => new Error("Stopped.");
-    let answer: string | undefined;
+    let answer: D | undefined;
     const handle = (line: string) => {
       // Not every fetch ends the body when its request is aborted; stop here regardless.
       if (signal?.aborted) throw stopped();
       if (!line.trim()) return;
-      const frame = open<{ event?: ChatEvent; done?: string; error?: string }>(
+      const frame = open<{ event?: E; done?: D; error?: string }>(
         JSON.parse(line),
         this.hostKey,
         this.secretKey,

@@ -88,6 +88,12 @@ You always see the whole skill before it's installed, along with anything that l
 
 Open **Cloud models** on the admin page, pick a provider (OpenAI, Anthropic, Google Gemini, OpenRouter, Groq, Mistral, DeepSeek, xAI, Together, Ollama on another machine, or any OpenAI-compatible API), paste an API key and choose which models to offer. They appear in the chat's model menu next to the local model. The key stays on your computer in `providers.json` and is never sent to devices; messages to a cloud model do leave your computer, and the chat says so whenever one is picked. Admins decide whether members may use each provider.
 
+## Pictures and videos
+
+BrainWashed can also make pictures and short videos on your computer. Open **Models** on the admin page and download one under **Pictures and videos**: Z-Image Turbo, FLUX.1 schnell or Stable Diffusion 1.5 for pictures, Wan 2.1 1.3B or Wan 2.2 5B for videos. You can also import a `.safetensors`, `.ckpt` or `.gguf` checkpoint you already have. Then pick it in the chat's model menu and describe what you want. Attach a picture to change it, or with Wan 2.2 5B to set it in motion. Videos are animated WebP files, which play anywhere a picture shows.
+
+They run with [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp), which BrainWashed downloads the first time you make something (set **Settings → Custom sd-cli** to use your own build). Pictures take seconds on a graphics card and a few minutes on a CPU; videos take much longer and want 16 GB of memory or more. The same models are available through the API at `/v1/images/generations` and `/v1/videos`.
+
 ## Tools (MCP servers)
 
 Models can use tools from [MCP servers](https://modelcontextprotocol.io): read and write files, fetch web pages, search, call APIs, anything an MCP server offers. Open **Tools** on the admin page and add a server as a command this computer runs (for example `npx -y @modelcontextprotocol/server-filesystem ~/Documents`, or `uvx mcp-server-fetch`) or as an address it reaches over HTTP (for example `https://example.org/mcp`, with headers such as `Authorization` if it needs a token). You can also paste the `mcpServers` JSON a server's instructions give for Claude Desktop or Cursor.

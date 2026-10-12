@@ -146,6 +146,11 @@ describe.skipIf(!devserver)("against the real gateway", () => {
       await expect(again).rejects.toThrow(/no model/);
     }
     await expect(remote.chatResume("unknown", 0, () => {})).rejects.toThrow(/no longer/);
+
+    // Pictures and videos: none installed yet, but the catalog lists some.
+    expect(await remote.mediaModels()).toEqual([]);
+    expect((await remote.mediaCatalog()).some((m) => m.kind === "video")).toBe(true);
+    await expect(remote.generate({ model: "nope", prompt: "a cat" }, () => {})).rejects.toThrow(/no picture or video model/);
   }, 60_000);
 
   it("falls back to the relay when the computer's addresses don't answer", async () => {
