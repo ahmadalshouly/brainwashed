@@ -23,7 +23,9 @@ pub use community::{
     raw_skill_url, CommunitySkill, SkillOrigin, SkillPreview, DEFAULT_SKILL_INDEX, ORIGIN_FILE,
 };
 pub use documents::{read_document, Document, MAX_DOCUMENT_BYTES};
-pub use engine::{CatalogItem, ChatAccess, Engine, EngineConfig, EngineState, Event, HostInfo};
+pub use engine::{
+    CatalogItem, ChatAccess, ClientTools, Engine, EngineConfig, EngineState, Event, HostInfo,
+};
 pub use mcp::{McpServer, McpServerInfo, McpStatus, McpToolInfo, McpTransport, ToolResult};
 pub use media::{
     media_catalog, GeneratedMedia, MediaCatalogItem, MediaDefaults, MediaEvent, MediaModel,

@@ -405,6 +405,8 @@ pub struct Endpoint {
     pub tools: Vec<serde_json::Value>,
     /// Offer the tools but don't let the model call them, so it answers.
     pub no_more_calls: bool,
+    /// OpenAI's `tool_choice`, as an API client sent it.
+    pub tool_choice: Option<serde_json::Value>,
 }
 
 impl Endpoint {
@@ -417,6 +419,7 @@ impl Endpoint {
             ask_user: false,
             tools: Vec::new(),
             no_more_calls: false,
+            tool_choice: None,
         }
     }
 
@@ -575,6 +578,8 @@ pub async fn stream_turn(
         body.insert("tools".into(), tools.into());
         if endpoint.no_more_calls {
             body.insert("tool_choice".into(), "none".into());
+        } else if let Some(choice) = &endpoint.tool_choice {
+            body.insert("tool_choice".into(), choice.clone());
         }
     }
     if !endpoint.llama {

@@ -29,16 +29,28 @@ Every call needs `Authorization: Bearer <key>`. The API allows calls from web pa
 Request fields:
 
 - `model`: `local`, an id from `/v1/models`, or the local model's own name. Left out, the local model answers.
-- `messages`: `system` (or `developer`), `user` and `assistant` messages. `content` is a string, or a list of `{ "type": "text", "text" }` and `{ "type": "image_url", "image_url": { "url": "data:image/png;base64,…" } }` parts. Pictures must be data URLs, and the model has to be able to see them.
+- `messages`: `system` (or `developer`), `user`, `assistant` and `tool` messages. `content` is a string, or a list of `{ "type": "text", "text" }` and `{ "type": "image_url", "image_url": { "url": "data:image/png;base64,…" } }` parts. Pictures must be data URLs, and the model has to be able to see them.
 - `stream`, and `stream_options.include_usage` for a usage chunk at the end.
 - `temperature`, `top_p`, `max_tokens` (or `max_completion_tokens`), `seed`, `presence_penalty`, and llama.cpp's `top_k`, `min_p` and `repeat_penalty`. Anything left out uses the admin's chat defaults, then the model's own.
+- `tools` and `tool_choice`: functions your app runs itself, in OpenAI's format. See [Tools](#tools).
 - `reasoning_effort`: `"none"` turns thinking off for models that think (such as Qwen3); any other value turns it on. `reasoning: true|false` does the same.
 
 Your `system` message is added after BrainWashed's own system prompt and skills; it doesn't replace them.
 
-Not supported: tool and function calls, `n` other than 1, `logprobs`, audio, and picture edits (`/v1/images/edits`). Unknown fields are ignored.
+Not supported: the old `functions` field (use `tools`), `n` other than 1, `logprobs`, audio, and picture edits (`/v1/images/edits`). Unknown fields are ignored.
 
-Some models are trained to call tools and do so even when none are offered. BrainWashed takes that markup out of the answer: a call that only asks the user a question (`ask_user` and similar) comes back as ordinary text (the question, then each option on a `- ` line), and any other call comes back in `tool_calls` with `finish_reason: "tool_calls"`, so it never shows up as raw tokens. Nothing runs these calls.
+Some models are trained to call tools and do so even when none are offered. BrainWashed takes that markup out of the answer: a call that only asks the user a question (`ask_user` and similar) comes back as ordinary text (the question, then each option on a `- ` line), and any other call comes back in `tool_calls` with `finish_reason: "tool_calls"`, so it never shows up as raw tokens.
+
+#### Tools
+
+Send `tools` and the model can call them, as with OpenAI: the reply ends with the calls in `tool_calls` (streamed whole, one chunk per call) and `finish_reason: "tool_calls"`. Your app runs them and sends the conversation back with the assistant message and its `tool_calls`, then one `{ "role": "tool", "tool_call_id", "content" }` message per result. BrainWashed never runs your tools, and while you send your own, the MCP servers on the **Tools** page aren't offered. `tool_choice` (`auto`, `required`, `none` or one function) is passed on to the model.
+
+This is what coding agents such as OpenCode, Aider, Cline and Continue need to make folders, edit files and run commands. Two things decide how well it works with the model on your computer:
+
+- **A model trained for tools.** Qwen3 (4B and up), Qwen2.5 Coder Instruct (7B and up), Llama 3.1 and 3.2 Instruct, and Mistral Small call tools reliably; tiny models and ones whose chat template knows nothing of tools mostly answer in words instead.
+- **A large context.** An agent's own instructions and tool list take 10,000 tokens or more before your first message. Raise **Context size** in **Settings** to at least 32768 (more if your computer has the memory), or the conversation won't fit.
+
+Cloud models that support tools work too: pick `<provider>/<model>` as the model.
 
 Replies follow OpenAI's format. A thinking model's thoughts come in `reasoning_content` (in `message` or in each streamed `delta`), as llama.cpp and DeepSeek do. `finish_reason` is `length` when the reply hit `max_tokens`. Errors look like `{ "error": { "message", "type", "code" } }`, with 401 for a missing or revoked key, 404 for an unknown model, and 400 for a bad request.
 
@@ -98,3 +110,33 @@ console.log(reply.choices[0].message.content);
 ```
 
 Apps with an "OpenAI-compatible" or "custom OpenAI" setting (for example Open WebUI, Continue, or LibreChat) take the same base URL and key.
+
+### OpenCode
+
+Add BrainWashed as a provider in `opencode.json` (in your project, or `~/.config/opencode/opencode.json` for every project):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "brainwashed": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "BrainWashed",
+      "options": {
+        "baseURL": "http://localhost:47860/v1",
+        "apiKey": "{env:BRAINWASHED_KEY}"
+      },
+      "models": {
+        "local": {
+          "name": "BrainWashed local model",
+          "tool_call": true,
+          "limit": { "context": 32768, "output": 4096 }
+        }
+      }
+    }
+  },
+  "model": "brainwashed/local"
+}
+```
+
+Set `BRAINWASHED_KEY` to a key from the **API** page, then pick **BrainWashed local model** with `/models`. Keep `limit.context` the same as the **Context size** in BrainWashed's settings. To use a cloud model through BrainWashed, add it under `models` by its id from `/v1/models`, like `"openai/gpt-4.1": {}`.

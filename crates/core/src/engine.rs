@@ -713,8 +713,25 @@ impl Engine {
         sampling: &SamplingOptions,
         model: Option<&str>,
         access: ChatAccess,
+        on_event: impl FnMut(ChatEvent),
+    ) -> Result<String> {
+        self.chat_with_tools(conversation, sampling, model, access, None, on_event)
+            .await
+    }
+
+    /// Like [`Engine::chat_with`], offering the tools an API client brought
+    /// instead of the MCP servers'. Their calls end the reply, for the client
+    /// to run; the results come back as `tool` messages in its next request.
+    pub async fn chat_with_tools(
+        &self,
+        conversation: &[ChatMessage],
+        sampling: &SamplingOptions,
+        model: Option<&str>,
+        access: ChatAccess,
+        client_tools: Option<ClientTools>,
         mut on_event: impl FnMut(ChatEvent),
     ) -> Result<String> {
+        let client_tools = client_tools.filter(|t| !t.definitions.is_empty());
         // The chat's own settings win; the admin's defaults fill the rest.
         let sampling = &sampling.clone().or(&self.settings().chat_defaults);
         sampling
@@ -753,12 +770,17 @@ impl Engine {
                 "This model can't see pictures. Switch to a model that can, like Gemma 3 4B or Qwen2.5 VL 3B, or ask an admin to download one.".into(),
             ));
         }
-        let toolbox = if access.tools && knows_tools {
+        let client = client_tools.is_some();
+        let toolbox = if access.tools && knows_tools && !client {
             self.toolbox(access.admin).await
         } else {
             Default::default()
         };
         endpoint.tools = toolbox.definitions.clone();
+        if let Some(tools) = client_tools {
+            endpoint.tools = tools.definitions;
+            endpoint.tool_choice = tools.choice;
+        }
         let tool_tokens: usize = endpoint
             .tools
             .iter()
@@ -766,7 +788,7 @@ impl Engine {
             .sum();
         let (mut prompt, skills) = self.build_prompt_with(conversation, context, tool_tokens);
         on_event(ChatEvent::Skills { names: skills });
-        let client = if endpoint.llama {
+        let http = if endpoint.llama {
             &self.inner.local
         } else {
             &self.inner.client
@@ -777,7 +799,13 @@ impl Engine {
 
         let mut answer = String::new();
         let mut stats: Vec<ReplyStats> = Vec::new();
-        let mut next_call = 0;
+        // Ids go on from the calls already in the conversation, so a
+        // client's calls of earlier replies keep theirs.
+        let mut next_call = if client {
+            conversation.iter().map(|m| m.tool_calls.len()).sum()
+        } else {
+            0
+        };
         let mut round = 0;
         loop {
             // The last round may not call tools, so the model has to answer.
@@ -786,14 +814,8 @@ impl Engine {
             let mut said_anything = false;
             let gap = !answer.is_empty() && !answer.ends_with('\n');
             let mut gap_sent = false;
-            let turn = chat::stream_turn(
-                client,
-                &endpoint,
-                &prompt,
-                sampling,
-                vision,
-                next_call,
-                |d| {
+            let turn =
+                chat::stream_turn(http, &endpoint, &prompt, sampling, vision, next_call, |d| {
                     said_anything = true;
                     match d {
                         chat::Delta::Stats(s) => round_stats = Some(s),
@@ -809,14 +831,13 @@ impl Engine {
                         }
                         other => on_event(other.into()),
                     }
-                },
-            )
-            .await;
+                })
+                .await;
             let turn = match turn {
                 Ok(turn) => turn,
                 // Some models' templates or llama.cpp can't take a tool's
                 // schema; answering without the tools beats failing.
-                Err(e) if round == 0 && !endpoint.tools.is_empty() && !said_anything => {
+                Err(e) if round == 0 && !endpoint.tools.is_empty() && !said_anything && !client => {
                     tracing::warn!("the model refused the MCP tools, answering without them: {e}");
                     endpoint.tools.clear();
                     continue;
@@ -830,6 +851,7 @@ impl Engine {
             answer.push_str(&turn.answer);
             next_call += turn.calls.len();
             if turn.asked
+                || client
                 || turn.calls.is_empty()
                 || endpoint.tools.is_empty()
                 || endpoint.no_more_calls
@@ -889,6 +911,15 @@ impl ChatAccess {
         ask_user: true,
         tools: true,
     };
+}
+
+/// Tools an API client offers the model and runs itself.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ClientTools {
+    /// In OpenAI's `tools` format.
+    pub definitions: Vec<serde_json::Value>,
+    /// OpenAI's `tool_choice`: `auto`, `none`, `required` or one function.
+    pub choice: Option<serde_json::Value>,
 }
 
 /// How many times one reply may go back to the model with tool results.

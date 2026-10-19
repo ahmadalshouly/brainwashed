@@ -952,6 +952,126 @@ async fn the_openai_api_returns_tool_calls_the_model_makes() {
     assert!(text.contains("\"finish_reason\":\"tool_calls\""), "{text}");
 }
 
+#[tokio::test]
+async fn the_openai_api_passes_the_clients_tools_and_results_through() {
+    use axum::{routing::post, Json, Router};
+    use std::sync::{Arc, Mutex};
+
+    // A model that calls the client's tool natively, and remembers requests.
+    let seen: Arc<Mutex<Vec<Value>>> = Arc::default();
+    let record = seen.clone();
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(move |Json(body): Json<Value>| {
+            let record = record.clone();
+            async move {
+                record.lock().unwrap().push(body);
+                (
+                    [("content-type", "text/event-stream")],
+                    concat!(
+                        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"x\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"command\\\":\"}}]}}]}\n\n",
+                        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"mkdir demo\\\"}\"}}]}}]}\n\n",
+                        "data: [DONE]\n\n",
+                    ),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let (_gw, url, port, _dir) = setup().await;
+    let mut admin = Phone::from_offer(&url, port);
+    admin.pair(&query(&url, "t")).await.unwrap();
+    admin
+        .call(
+            "saveProvider",
+            json!({ "provider": { "id": "acme", "name": "acme", "baseUrl": base, "apiKey": "k", "models": ["fast"], "members": true }}),
+        )
+        .await;
+    let created = admin.call("createApiKey", json!({ "name": "t" })).await;
+    let secret = created["ok"]["secret"].as_str().unwrap().to_string();
+    let api = format!("http://127.0.0.1:{port}/v1/chat/completions");
+    let http = reqwest::Client::new();
+    let bash = json!({ "type": "function", "function": { "name": "bash", "description": "Run a command", "parameters": { "type": "object", "properties": { "command": { "type": "string" } } } } });
+
+    let body: Value = http
+        .post(&api)
+        .bearer_auth(&secret)
+        .json(&json!({
+            "model": "acme/fast",
+            "tools": [bash],
+            "tool_choice": "auto",
+            "messages": [{ "role": "user", "content": "make a folder called demo" }],
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let sent = seen.lock().unwrap().pop().unwrap();
+    assert_eq!(sent["tools"], json!([bash]), "{sent}");
+    assert_eq!(sent["tool_choice"], "auto");
+    let choice = &body["choices"][0];
+    assert_eq!(choice["finish_reason"], "tool_calls", "{body}");
+    let call = &choice["message"]["tool_calls"][0];
+    assert_eq!(call["id"], "call_0");
+    assert_eq!(call["function"]["name"], "bash");
+    assert_eq!(
+        call["function"]["arguments"],
+        "{\"command\":\"mkdir demo\"}"
+    );
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        0,
+        "the host doesn't run the client's tools"
+    );
+
+    // The client ran it and sends the result back.
+    let text = http
+        .post(&api)
+        .bearer_auth(&secret)
+        .json(&json!({
+            "model": "acme/fast",
+            "stream": true,
+            "tools": [bash],
+            "messages": [
+                { "role": "user", "content": "make a folder called demo" },
+                { "role": "assistant", "content": null, "tool_calls": [call] },
+                { "role": "tool", "tool_call_id": "call_0", "content": [{ "type": "text", "text": "done" }] },
+            ],
+        }))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let sent = seen.lock().unwrap().pop().unwrap();
+    let msgs = sent["messages"].as_array().unwrap();
+    let n = msgs.len();
+    assert_eq!(
+        msgs[n - 2]["tool_calls"][0]["function"]["name"],
+        "bash",
+        "{sent}"
+    );
+    assert_eq!(
+        msgs[n - 2]["tool_calls"][0]["function"]["arguments"],
+        "{\"command\":\"mkdir demo\"}"
+    );
+    assert_eq!(msgs[n - 1]["role"], "tool");
+    assert_eq!(msgs[n - 1]["content"], "done");
+    assert_eq!(
+        msgs[n - 1]["tool_call_id"],
+        msgs[n - 2]["tool_calls"][0]["id"]
+    );
+    // A new call gets a new id.
+    assert!(text.contains("\"id\":\"call_1\""), "{text}");
+    assert!(text.contains("\"finish_reason\":\"tool_calls\""), "{text}");
+}
+
 /// A provider that writes "Hel" and then nothing, until the host hangs up.
 /// The flag turns true when the host closed the stream.
 async fn endless_provider() -> (
