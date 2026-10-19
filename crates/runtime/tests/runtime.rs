@@ -340,6 +340,7 @@ async fn talks_to_cloud_providers() {
         ask_user: false,
         tools: Vec::new(),
         no_more_calls: false,
+        tool_choice: None,
     };
 
     assert_eq!(

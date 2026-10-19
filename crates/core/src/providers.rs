@@ -199,6 +199,7 @@ impl Engine {
             ask_user: false,
             tools: Vec::new(),
             no_more_calls: false,
+            tool_choice: None,
         };
         Ok(chat::list_models(&self.inner.client, &endpoint).await?)
     }
@@ -258,6 +259,7 @@ impl Engine {
             ask_user: false,
             tools: Vec::new(),
             no_more_calls: false,
+            tool_choice: None,
         })
     }
 }

@@ -22,8 +22,10 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use brainwashed_core::runtime::toolcalls::ToolCall;
 use brainwashed_core::{
-    Attachment, ChatAccess, ChatEvent, ChatMessage, Engine, Role, SamplingOptions, LOCAL_MODEL,
+    Attachment, ChatAccess, ChatEvent, ChatMessage, ClientTools, Engine, Role, SamplingOptions,
+    LOCAL_MODEL,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -141,6 +143,11 @@ pub(crate) struct CompletionRequest {
     /// BrainWashed's own switch for thinking, as in device chat options.
     reasoning: Option<bool>,
     n: Option<u32>,
+    /// Tools the client runs itself, in OpenAI's format. The model's calls
+    /// come back as `tool_calls` and the reply ends there.
+    #[serde(default)]
+    tools: Vec<Value>,
+    tool_choice: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -154,6 +161,27 @@ struct InMessage {
     role: String,
     #[serde(default)]
     content: Option<Content>,
+    /// Tools an assistant message called.
+    #[serde(default)]
+    tool_calls: Option<Vec<InToolCall>>,
+    /// For `tool` messages: the call this is the result of.
+    #[serde(default)]
+    tool_call_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct InToolCall {
+    #[serde(default)]
+    id: String,
+    function: InFunction,
+}
+
+#[derive(Deserialize)]
+struct InFunction {
+    name: String,
+    /// A JSON string, as OpenAI sends it.
+    #[serde(default)]
+    arguments: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -209,13 +237,31 @@ impl CompletionRequest {
                 "system" | "developer" => Role::System,
                 "user" => Role::User,
                 "assistant" => Role::Assistant,
+                "tool" => Role::Tool,
                 other => {
                     return Err(format!(
-                    "messages with role `{other}` aren't supported; use system, user or assistant"
+                    "messages with role `{other}` aren't supported; use system, user, assistant or tool"
                 ))
                 }
             };
             let mut msg = ChatMessage::new(role, "");
+            if role == Role::Tool {
+                msg.tool_call_id = Some(
+                    m.tool_call_id
+                        .clone()
+                        .ok_or("tool messages need a tool_call_id")?,
+                );
+            }
+            for call in m.tool_calls.iter().flatten() {
+                let args = call.function.arguments.as_deref().unwrap_or("{}");
+                msg.tool_calls.push(ToolCall {
+                    id: call.id.clone(),
+                    name: call.function.name.clone(),
+                    arguments: serde_json::from_str(args)
+                        .unwrap_or_else(|_| Value::String(args.into())),
+                    raw: None,
+                });
+            }
             match &m.content {
                 None => {}
                 Some(Content::Text(t)) => msg.content = t.clone(),
@@ -227,6 +273,9 @@ impl CompletionRequest {
                                     msg.content.push('\n');
                                 }
                                 msg.content.push_str(text);
+                            }
+                            Part::ImageUrl { .. } if role == Role::Tool => {
+                                return Err("tool results can only be text".into())
                             }
                             Part::ImageUrl { image_url } => {
                                 pictures += 1;
@@ -247,6 +296,18 @@ impl CompletionRequest {
             return Err("send at least one user message".into());
         }
         Ok(out)
+    }
+
+    fn client_tools(&self) -> Option<ClientTools> {
+        let choice = self.tool_choice.clone();
+        // `none` means the model may only answer, as if no tools were sent.
+        if self.tools.is_empty() || choice.as_ref().and_then(Value::as_str) == Some("none") {
+            return None;
+        }
+        Some(ClientTools {
+            definitions: self.tools.clone(),
+            choice,
+        })
     }
 }
 
@@ -406,6 +467,7 @@ pub(crate) async fn chat_completions(
         Err(resp) => return resp,
     };
     let options = req.options();
+    let client_tools = req.client_tools();
     // Checked here too, so a bad value is a 400 before any streaming starts.
     if let Err(e) = options
         .clone()
@@ -440,16 +502,17 @@ pub(crate) async fn chat_completions(
         let progress = recorder.progress.clone();
         let started = recorder.started;
         let result = engine
-            .chat_with(
+            .chat_with_tools(
                 &messages,
                 &options,
                 Some(&task_model),
-                // Scripts bring their own tools; the host's aren't offered.
+                // Clients bring their own tools; the host's aren't offered.
                 ChatAccess {
                     admin,
                     ask_user: false,
                     tools: false,
                 },
+                client_tools,
                 move |e| {
                     progress.lock().unwrap().see(&e, started);
                     let _ = events.send(Piece::Event(e));
@@ -554,7 +617,7 @@ fn finish_reason(stats: Option<&brainwashed_core::ReplyStats>) -> &'static str {
 
 /// Tool calls API clients get as text: ones that couldn't be read, and the
 /// model asking the person something (API clients didn't offer that tool).
-fn call_text(call: &brainwashed_core::runtime::toolcalls::ToolCall) -> Option<String> {
+fn call_text(call: &ToolCall) -> Option<String> {
     if call.name.is_empty() {
         return Some(call.raw.clone().unwrap_or_default());
     }
@@ -563,15 +626,17 @@ fn call_text(call: &brainwashed_core::runtime::toolcalls::ToolCall) -> Option<St
 
 /// A tool call the model made, in OpenAI's shape. Streamed calls carry
 /// their index and come whole, in one chunk.
-fn wire_call(
-    i: usize,
-    call: &brainwashed_core::runtime::toolcalls::ToolCall,
-    streamed: bool,
-) -> Value {
+fn wire_call(i: usize, call: &ToolCall, streamed: bool) -> Value {
+    // A JSON string; arguments the model wrote badly go as it wrote them.
+    let arguments = match &call.arguments {
+        Value::Null => "{}".to_string(),
+        Value::String(raw) => raw.clone(),
+        v => v.to_string(),
+    };
     let mut v = json!({
         "id": call.id,
         "type": "function",
-        "function": { "name": call.name, "arguments": call.arguments.to_string() },
+        "function": { "name": call.name, "arguments": arguments },
     });
     if streamed {
         v["index"] = json!(i);
